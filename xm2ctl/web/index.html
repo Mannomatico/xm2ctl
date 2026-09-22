@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="xm2-token" content="{{TOKEN}}">
+  <title>XM2w 4k</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <h1 class="model">XM2w 4k</h1>
+    <div class="device" id="device" aria-live="polite"></div>
+    <div class="battery" id="battery" hidden>
+      <div class="cell" aria-hidden="true"><div class="charge" id="battery-charge"></div></div>
+      <span id="battery-text"></span>
+    </div>
+  </header>
+
+  <section class="offline" id="offline" hidden>
+    <h2>Mouse not found</h2>
+    <p id="offline-reason"></p>
+    <p>Plug in the wireless receiver or the USB cable, move the mouse to wake it up, then try again.</p>
+    <button type="button" id="retry">Try again</button>
+  </section>
+
+  <main class="layout" id="main" hidden>
+    <section class="mouse-panel" aria-labelledby="buttons-heading">
+      <h2 id="buttons-heading">Buttons</h2>
+      <svg class="schematic" viewBox="0 0 240 400" role="img" aria-label="Top view of the mouse. Select a button to change it.">
+        <path class="body" d="M120 14 C176 14 212 58 214 140 L214 298 C214 356 178 390 120 390 C62 390 26 356 26 298 L26 140 C28 58 64 14 120 14 Z"/>
+        <path class="part" data-button="left" d="M118 18 C68 20 32 62 30 140 L30 168 L118 168 Z"/>
+        <path class="part" data-button="right" d="M122 18 C172 20 208 62 210 140 L210 168 L122 168 Z"/>
+        <rect class="part" data-button="middle" x="109" y="46" width="22" height="54" rx="10"/>
+        <g class="part-group" data-button="wheel_up">
+          <rect class="hit" x="104" y="24" width="32" height="20"/>
+          <path class="chevron" d="M112 38 L120 30 L128 38"/>
+        </g>
+        <g class="part-group" data-button="wheel_down">
+          <rect class="hit" x="104" y="102" width="32" height="20"/>
+          <path class="chevron" d="M112 108 L120 116 L128 108"/>
+        </g>
+        <rect class="part" data-button="forward" x="14" y="178" width="13" height="42" rx="5"/>
+        <rect class="part" data-button="back" x="14" y="226" width="13" height="42" rx="5"/>
+        <circle class="part underside" data-button="cpi" cx="120" cy="300" r="15"/>
+        <text class="underside-label" x="120" y="336">underside</text>
+      </svg>
+      <ul class="legend" id="legend"></ul>
+      <div class="editor" id="editor"></div>
+    </section>
+
+    <div class="settings">
+      <section aria-labelledby="sensor-heading">
+        <h2 id="sensor-heading">Sensor</h2>
+        <div id="sensor"></div>
+      </section>
+      <section aria-labelledby="tracking-heading">
+        <h2 id="tracking-heading">Tracking and filters</h2>
+        <div id="tracking"></div>
+      </section>
+      <section aria-labelledby="power-heading">
+        <h2 id="power-heading">Power</h2>
+        <div id="power"></div>
+      </section>
+    </div>
+  </main>
+
+  <footer class="savebar" id="savebar" hidden>
+    <p id="message" role="status"></p>
+    <button type="button" id="discard">Discard changes</button>
+    <button type="button" id="save" class="primary">Save to mouse</button>
+  </footer>
+</body>
+</html>

@@ -1,0 +1,2 @@
+# Endgame Gear devices: give the logged-in user access to the hidraw nodes
+SUBSYSTEM=="hidraw", ATTRS{idVendor}=="3367", TAG+="uaccess"

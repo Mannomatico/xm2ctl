@@ -1,0 +1,11 @@
+[Unit]
+Description=XM2w 4k web configuration and battery monitor
+
+[Service]
+WorkingDirectory=%h/.local/share/xm2ctl
+ExecStart=/usr/bin/python3 -m xm2ctl.server
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

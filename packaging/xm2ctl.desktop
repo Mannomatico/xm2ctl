@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=XM2w 4k
+Comment=Configure the Endgame Gear XM2w 4k mouse
+Exec=xdg-open http://127.0.0.1:8341
+Icon=input-mouse
+Terminal=false
+Categories=Settings;HardwareSettings;

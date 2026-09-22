@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+
+# Local captures and dumps may contain personal device data
+*.pcapng
+*.bin

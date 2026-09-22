@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xm2ctl"
+version = "0.1.0"
+description = "Configure the Endgame Gear XM2w 4k mouse on Linux (unofficial)"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+classifiers = [
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Hardware",
+]
+
+[project.scripts]
+xm2ctl = "xm2ctl.__main__:main"
+xm2ctl-server = "xm2ctl.server:main"
+
+[tool.setuptools]
+packages = ["xm2ctl"]
+
+[tool.setuptools.package-data]
+xm2ctl = ["web/*"]
