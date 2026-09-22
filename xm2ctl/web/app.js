@@ -275,7 +275,10 @@ function renderEditor() {
         .map((v) => `<option value="${v}" ${v === value ? "selected" : ""}>${v}</option>`).join("")}</select></label>`;
     } else if (type === "key") {
       html += `<label class="row"><span>Key<p class="hint">For example f5, a, ctrl+c or ctrl+shift+esc</p></span>
-        <input type="text" id="action-value" value="${escapeHtml(value)}" spellcheck="false" autocomplete="off"></label>`;
+        <input type="text" id="action-value" value="${escapeHtml(value)}" spellcheck="false" autocomplete="off"></label>
+        <p class="hint warning">Linux ignores keyboard keys sent by this mouse because of a bug in its
+        firmware (1.10). Media keys and mouse buttons work. Bind keys in your game or with a remapping
+        tool instead.</p>`;
     }
   }
 

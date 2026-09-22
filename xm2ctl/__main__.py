@@ -126,6 +126,9 @@ def cmd_set(dev: Device, args: argparse.Namespace) -> None:
     if args.left_handed is not None:
         new.left_handed = args.left_handed
     for button, action in args.map or []:
+        if action.lower().startswith("key:"):
+            print("warning: Linux ignores keyboard keys sent by this mouse (firmware 1.10 HID "
+                  "descriptor bug). Media keys and mouse buttons work.", file=sys.stderr)
         if button not in REMAPPABLE_BUTTONS:
             raise ValueError(f"'{button}' cannot be remapped; use one of {REMAPPABLE_BUTTONS}")
         new.set_mapping(button, parse_action(action))

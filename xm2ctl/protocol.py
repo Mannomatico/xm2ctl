@@ -290,14 +290,13 @@ class Config:
 
     def basic_payload(self) -> bytes:
         """Payload of OP_WRITE_BASIC, byte-identical to the official tool."""
-        xy_split = any(self.get_cpi(level)[2] for level in range(1, CPI_COUNT + 1))
         header = bytes([
             self.raw[OFF_UNKNOWN_23],
             self.raw[OFF_LIFT_OFF_LED],
             self.raw[OFF_LOD],
             self.raw[OFF_ANGLE_SNAPPING],
             self.raw[OFF_RIPPLE_CONTROL],
-            int(xy_split),  # assumption: "X/Y Settings" checkbox, 0 in all captures
+            0x00,  # unknown; 0 in all captures and in XM2w Control, split is per CPI level
             self.raw[OFF_CPI_LEVEL_COUNT],
             self.raw[OFF_UNKNOWN_29],
         ])

@@ -20,6 +20,27 @@ carries these reports:
 | `0x02` | input | keyboard | output of buttons mapped to keys |
 | `0x06` | input | consumer | output of buttons mapped to media keys |
 
+### Keyboard report descriptor bug (firmware 1.10)
+
+The keyboard collection (report `0x02`, 8 bytes: modifiers, reserved, 5 key slots) is
+declared as:
+
+    95 05 75 08 15 00 25 65 05 07 19 01 29 65 81 00
+                ^ logical min 0    ^ usage min 1
+
+The firmware fills the key slots with plain HID usages (`04` = A) and `00` for empty slots,
+which requires usage minimum `0`. With usage minimum `1`, hosts that follow the descriptor
+read every value as usage + 1: `04` becomes B and every empty slot becomes usage `01`
+(ErrorRollOver). Linux discards reports containing ErrorRollOver, so no key event is ever
+delivered. Observed raw report for a button mapped to A:
+
+    02 00 00 00 00 00 04 00   press
+    02 00 00 00 00 00 00 00   release
+
+A report descriptor fixup that replaces `19 01` with `19 00` in this collection (for
+example with HID-BPF) would fix it. The consumer collection (report `0x06`, media keys) is
+declared correctly and works.
+
 ## Commands
 
 Every command is a 64-byte SET_FEATURE on report `0xA1`: `[0xA1, opcode, args..., 0...]`.
@@ -41,6 +62,18 @@ every command, and waits longer (about 1 s instead of 0.5 s) before reading repl
 
 Note: reading the config via report `0xA1` works over the cable but returns receiver data
 in the header over the receiver. Always read via report `0xA0`.
+
+## Dangerous commands
+
+Never send these unless you know exactly what you are doing:
+
+| Command | Effect |
+|---|---|
+| SET_FEATURE report `0xA0`, first data byte `0x00` | enters the firmware bootloader (device re-enumerates as `3367:1967`), per the reflash script in [XM2w Control](https://github.com/qaustria/xm2w) |
+| `[0xA1, 0x13]` | factory reset |
+
+`[0xA0, 0x11, config...]` (the "store config" command of the OP1 8k v2 used by egctl) is
+accepted but ignored by the XM2w 4k; use the write blocks below instead.
 
 ## Config layout
 
@@ -96,6 +129,6 @@ The payload starts at byte 16. After each block the tool waits and reads the ack
 
 | Opcode | Length | Payload |
 |---|---|---|
-| `0x14` | 28 | config[23], LED on lift-off, LOD, angle snapping, ripple control, X/Y split flag (assumed), CPI level count, config[29], then the 20 CPI bytes from offset 51 |
+| `0x14` | 28 | config[23], LED on lift-off, LOD, angle snapping, ripple control, `0x00` (unknown), CPI level count, config[29], then the 20 CPI bytes from offset 51 |
 | `0x15` | 10 | motion sync, polling code, filters, power saving, click byte of left, right, middle, back, forward, deep sleep |
 | `0x16` | 28 | chunk 1: button entries 1–4, chunk 2: entries 5–8, exactly as in the config |

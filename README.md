@@ -32,14 +32,22 @@ supported yet. Reports and captures from other models are welcome.
 - Tracking: angle snapping, ripple control, motion sync, slamclick and jitter filters,
   LED on lift-off
 - Clicks: debounce time per button, GX safe/speed mode for the main buttons
-- Buttons: remap to mouse buttons, keyboard keys and combinations, media keys, scroll,
-  CPI cycling; left-handed mode
+- Buttons: remap to mouse buttons, media keys, scroll, CPI cycling, keyboard keys and
+  combinations (see known issues); left-handed mode
 - Power: power saving and deep sleep timers
 - Battery level, mouse and receiver firmware versions
 - Every write is backed up first and verified by reading the config back
 
 Not supported: firmware updates and receiver pairing (use the official tool), X/Y split
 CPI values are implemented but not yet verified on hardware.
+
+## Known issues
+
+**Keyboard key mappings do not work on Linux.** The mouse sends the key correctly, but the
+HID report descriptor in firmware 1.10 declares the keyboard key array with usage minimum
+1 instead of 0. Linux therefore reads every empty key slot as "ErrorRollOver" and drops
+the whole report. Mouse button, scroll and media key mappings are not affected. Bind keys
+in your game or with a remapping tool instead. Details in [PROTOCOL.md](PROTOCOL.md).
 
 ## Install
 
@@ -95,6 +103,9 @@ See [PROTOCOL.md](PROTOCOL.md) for the reverse engineered USB HID protocol.
 - [egctl](https://github.com/Creationsss/egctl) by Creationsss, a configuration tool for
   the Endgame Gear OP1 8k v2. Its source was the starting point for understanding the
   config layout. No code was copied.
+- [XM2w Control](https://github.com/qaustria/xm2w) by qaustria, a Tauri desktop app for
+  the same mouse on macOS and Linux. Its sources confirmed parts of the protocol and the
+  bootloader command documented in PROTOCOL.md.
 
 ## License
 
