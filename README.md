@@ -66,11 +66,11 @@ Requirements: Linux with systemd, Python 3.9 or newer, `gdbus` for notifications
 ## Web UI
 
 Open http://127.0.0.1:8341 or start "XM2w 4k" from the app grid. The service checks the
-battery every 5 minutes and shows a desktop notification once it drops to 20 % or less.
+battery every 2 minutes and shows a desktop notification once it drops to 20 % or less.
 
 Options go into `ExecStart` in `~/.config/systemd/user/xm2ctl.service`:
 
-    --port 8341  --low-battery 20  --interval 300
+    --port 8341  --low-battery 20  --interval 120
 
     systemctl --user status xm2ctl
     journalctl --user -u xm2ctl
@@ -78,6 +78,21 @@ Options go into `ExecStart` in `~/.config/systemd/user/xm2ctl.service`:
 The server listens on 127.0.0.1 only, rejects requests with a foreign `Host` or `Origin`
 header and requires a random per-start token for every write, so other websites open in
 your browser cannot change the mouse settings.
+
+## Top bar battery indicator (GNOME)
+
+`install.sh` also installs a small GNOME Shell extension that shows the battery level in
+the top bar, next to a mouse icon. It hides itself while no mouse is connected, turns
+red at the low battery threshold and opens the web UI from its menu. It reads the cached
+value from the service (`/api/battery`) and never talks to the mouse itself.
+
+On Wayland, log out and back in once after the first install, then enable it:
+
+    gnome-extensions enable xm2ctl@mannomatico.github.io
+
+If it stays disabled, user extensions may be switched off globally:
+
+    gsettings set org.gnome.shell disable-user-extensions false
 
 ## Command line
 

@@ -1,0 +1,7 @@
+{
+  "uuid": "xm2ctl@mannomatico.github.io",
+  "name": "XM2w 4k Battery",
+  "description": "Shows the battery level of the Endgame Gear XM2w 4k in the top bar. Requires the xm2ctl service.",
+  "shell-version": ["47", "48", "49", "50", "51"],
+  "url": "https://github.com/Mannomatico/xm2ctl"
+}

@@ -136,11 +136,15 @@ class MouseService:
         self.low_battery = low_battery
         self.interval = interval
         self.battery: int | None = None
+        self.connection: str | None = None  # "wired", "wireless" or None if not found
+        self.battery_time: float | None = None
         self.warned = False
         self._firmware: dict[tuple[str, int], dict] = {}
 
-    def _record_battery(self, percent: int) -> None:
+    def _record_battery(self, percent: int, dev: Device) -> None:
         self.battery = percent
+        self.connection = "wired" if dev.is_wired else "wireless"
+        self.battery_time = time.time()
         if percent <= self.low_battery and not self.warned:
             notify("Mouse battery low", f"XM2w 4k is at {percent} %. Plug in the cable to charge.")
             self.warned = True
@@ -158,7 +162,7 @@ class MouseService:
             try:
                 with Device() as dev:
                     battery = dev.battery_percent()
-                    self._record_battery(battery)
+                    self._record_battery(battery, dev)
                     return {
                         "connected": True,
                         "connection": "wired" if dev.is_wired else "wireless",
@@ -171,6 +175,17 @@ class MouseService:
                 self._firmware.clear()
                 return {"connected": False, "error": str(exc)}
 
+    def battery_status(self) -> dict:
+        """Cached battery state for the panel indicator; never talks to the mouse."""
+        age = None if self.battery_time is None else round(time.time() - self.battery_time)
+        return {
+            "connected": self.connection is not None,
+            "connection": self.connection,
+            "battery": self.battery,
+            "age": age,
+            "low": self.battery is not None and self.battery <= self.low_battery,
+        }
+
     def apply(self, data: dict) -> dict:
         with self.lock:
             with Device() as dev:
@@ -182,15 +197,23 @@ class MouseService:
                     dev.write_config(old, new)
         return self.state()
 
+    def check_battery(self) -> None:
+        with self.lock:
+            try:
+                dev = Device()
+            except (DeviceError, OSError):
+                self.connection = None  # receiver or cable unplugged
+                return
+            try:
+                with dev:
+                    self._record_battery(dev.battery_percent(), dev)
+            except (DeviceError, OSError):
+                pass  # mouse asleep: keep the last known value
+
     def monitor(self) -> None:
         while True:
+            self.check_battery()
             time.sleep(self.interval)
-            with self.lock:
-                try:
-                    with Device() as dev:
-                        self._record_battery(dev.battery_percent())
-                except (DeviceError, OSError):
-                    pass  # mouse asleep, unplugged or receiver missing
 
 
 # --- HTTP --------------------------------------------------------------------
@@ -240,6 +263,8 @@ def make_handler(service: MouseService, token: str, port: int):
             if self.path in STATIC_FILES:
                 body = (WEB_ROOT / self.path.lstrip("/")).read_bytes()
                 return self._send(HTTPStatus.OK, body, STATIC_FILES[self.path])
+            if self.path == "/api/battery":
+                return self._json(HTTPStatus.OK, service.battery_status())
             if self.path == "/api/state":
                 return self._json(HTTPStatus.OK, {**service.state(), "limits": limits})
             self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
@@ -268,7 +293,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="xm2ctl.server")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--low-battery", type=int, default=20, help="warn at or below this percentage")
-    parser.add_argument("--interval", type=int, default=300, help="battery check interval in seconds")
+    parser.add_argument("--interval", type=int, default=120, help="battery check interval in seconds")
     args = parser.parse_args()
 
     service = MouseService(args.low_battery, args.interval)
