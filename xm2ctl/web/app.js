@@ -276,9 +276,11 @@ function renderEditor() {
     } else if (type === "key") {
       html += `<label class="row"><span>Key<p class="hint">For example f5, a, ctrl+c or ctrl+shift+esc</p></span>
         <input type="text" id="action-value" value="${escapeHtml(value)}" spellcheck="false" autocomplete="off"></label>
-        <p class="hint warning">Linux ignores keyboard keys sent by this mouse because of a bug in its
-        firmware (1.10). Media keys and mouse buttons work. Bind keys in your game or with a remapping
-        tool instead.</p>`;
+        ${state.keyboard_fix === true
+          ? '<p class="hint">The keyboard fix (HID-BPF) is active, keyboard keys work.</p>'
+          : `<p class="hint warning">Linux ignores keyboard keys sent by this mouse because of a bug in its
+        firmware (1.10). Install the HID-BPF fix from the repository, or bind keys in your game or with
+        a remapping tool instead. Media keys and mouse buttons always work.</p>`}`;
     }
   }
 

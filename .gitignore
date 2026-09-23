@@ -8,3 +8,7 @@ dist/
 # Local captures and dumps may contain personal device data
 *.pcapng
 *.bin
+
+# HID-BPF build output
+hid-bpf/vmlinux.h
+hid-bpf/*.bpf.o

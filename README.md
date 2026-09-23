@@ -43,11 +43,12 @@ CPI values are implemented but not yet verified on hardware.
 
 ## Known issues
 
-**Keyboard key mappings do not work on Linux.** The mouse sends the key correctly, but the
-HID report descriptor in firmware 1.10 declares the keyboard key array with usage minimum
-1 instead of 0. Linux therefore reads every empty key slot as "ErrorRollOver" and drops
-the whole report. Mouse button, scroll and media key mappings are not affected. Bind keys
-in your game or with a remapping tool instead. Details in [PROTOCOL.md](PROTOCOL.md).
+**Keyboard key mappings need a kernel-side fix.** The mouse sends mapped keys correctly,
+but the HID report descriptor in firmware 1.10 declares the keyboard key array with usage
+minimum 1 instead of 0. Linux therefore reads every empty key slot as "ErrorRollOver" and
+drops the whole report. Mouse button, scroll and media key mappings are not affected.
+The HID-BPF program in [`hid-bpf/`](hid-bpf/) corrects that one byte, see below.
+Details in [PROTOCOL.md](PROTOCOL.md).
 
 ## Install
 
@@ -90,6 +91,28 @@ your browser cannot change the mouse settings.
 
 Run `python3 -m xm2ctl set --help` for all options.
 
+## Keyboard fix (HID-BPF)
+
+Requires a kernel with HID-BPF struct_ops support (6.11 or newer) and
+[udev-hid-bpf](https://gitlab.freedesktop.org/libevdev/udev-hid-bpf).
+
+    sudo dnf install udev-hid-bpf clang bpftool libbpf-devel kernel-headers
+    sh hid-bpf/build.sh
+
+Try it without installing (lasts until the receiver or cable is unplugged):
+
+    udev-hid-bpf list-devices          # note the entries for 3367:1968 or 3367:1970
+    sudo udev-hid-bpf add /sys/bus/hid/devices/0003:3367:1970.XXXX \
+        hid-bpf/0010-EndgameGear__XM2w-4k.bpf.o
+
+The program only binds to the interface with the broken descriptor; other interfaces
+are skipped. `python3 -m xm2ctl info` shows `keyboard fix: active` once it is loaded.
+Install it permanently for both the cable and the receiver:
+
+    sudo udev-hid-bpf install hid-bpf/0010-EndgameGear__XM2w-4k.bpf.o
+
+The program and the vendored kernel headers in `hid-bpf/` are licensed GPL-2.0-only.
+
 ## Protocol
 
 See [PROTOCOL.md](PROTOCOL.md) for the reverse engineered USB HID protocol.
@@ -109,4 +132,5 @@ See [PROTOCOL.md](PROTOCOL.md) for the reverse engineered USB HID protocol.
 
 ## License
 
-MIT, see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE), except the files in `hid-bpf/`, which are GPL-2.0-only as
+required for HID-BPF programs.

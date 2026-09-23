@@ -38,6 +38,7 @@ WRITE_MARKER = 0x0F
 WRITE_CHUNK_INDEX = 6
 WRITE_PAYLOAD_OFFSET = 16
 ACK_OK = 0x01
+ACK_PENDING = 0x08  # reply not ready yet (seen over the receiver); poll again
 
 COMMAND_SIZE = 64
 CONFIG_REQUEST_SIZE = 1041

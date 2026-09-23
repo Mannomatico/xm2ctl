@@ -107,6 +107,8 @@ def cmd_info(dev: Device, _args: argparse.Namespace) -> None:
     if dongle:
         print(f"  dongle firmware   : {dongle}")
     print(f"  battery           : {dev.battery_percent()} %")
+    fix = {True: "active", False: "not installed", None: "unknown"}[dev.keyboard_fix]
+    print(f"  keyboard fix      : {fix}")
     print_config(dev.read_config())
 
 
@@ -126,9 +128,9 @@ def cmd_set(dev: Device, args: argparse.Namespace) -> None:
     if args.left_handed is not None:
         new.left_handed = args.left_handed
     for button, action in args.map or []:
-        if action.lower().startswith("key:"):
-            print("warning: Linux ignores keyboard keys sent by this mouse (firmware 1.10 HID "
-                  "descriptor bug). Media keys and mouse buttons work.", file=sys.stderr)
+        if action.lower().startswith("key:") and not dev.keyboard_fix:
+            print("warning: Linux ignores keyboard keys sent by this mouse unless the HID-BPF "
+                  "fix from hid-bpf/ is installed (firmware 1.10 descriptor bug).", file=sys.stderr)
         if button not in REMAPPABLE_BUTTONS:
             raise ValueError(f"'{button}' cannot be remapped; use one of {REMAPPABLE_BUTTONS}")
         new.set_mapping(button, parse_action(action))

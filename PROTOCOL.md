@@ -37,14 +37,17 @@ delivered. Observed raw report for a button mapped to A:
     02 00 00 00 00 00 04 00   press
     02 00 00 00 00 00 00 00   release
 
-A report descriptor fixup that replaces `19 01` with `19 00` in this collection (for
-example with HID-BPF) would fix it. The consumer collection (report `0x06`, media keys) is
+The HID-BPF program in `hid-bpf/0010-EndgameGear__XM2w-4k.bpf.c` replaces `19 01` with
+`19 00` (descriptor size 156, byte 41). The consumer collection (report `0x06`, media keys) is
 declared correctly and works.
 
 ## Commands
 
 Every command is a 64-byte SET_FEATURE on report `0xA1`: `[0xA1, opcode, args..., 0...]`.
-The reply is read with GET_FEATURE on report `0xA1`; byte 1 is the status, `0x01` = OK.
+The reply is read with GET_FEATURE on report `0xA1`; byte 1 is the status, `0x01` = OK,
+`0x08` = reply not ready yet. Over the receiver `0x08` can last noticeably longer while
+the keyboard interface is active (for example with the HID-BPF fix loaded); keep polling
+the reply until the status changes instead of treating it as an error.
 
 Over the receiver, the official tool sends `[0xA1, 0x0F, 0x01]` and reads the reply before
 every command, and waits longer (about 1 s instead of 0.5 s) before reading replies.

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .protocol import (
     ACK_OK,
+    ACK_PENDING,
     COMMAND_SIZE,
     CONFIG_REQUEST_SIZE,
     OP_BATTERY,
@@ -32,9 +33,18 @@ from .protocol import (
 
 HIDRAW_ROOT = Path("/sys/class/hidraw")
 
+# Keyboard key array in the report descriptor (see PROTOCOL.md). Firmware 1.10
+# ships Usage Minimum 1 at KEYS_USAGE_MIN; the HID-BPF fix changes it to 0.
+KEYS_OFFSET = 34
+KEYS_USAGE_MIN = KEYS_OFFSET + 7
+KEYS_PATTERN = bytes.fromhex("15 00 25 65 05 07 19 01 29 65 81 00")
+
 # Delays observed in the official tool before it polls for a reply.
 REPLY_DELAY_WIRED = 0.5
 REPLY_DELAY_DONGLE = 1.0
+# How long to keep polling while the device reports ACK_PENDING.
+REPLY_TIMEOUT = 3.0
+REPLY_POLL_INTERVAL = 0.1
 
 
 class DeviceError(Exception):
@@ -45,8 +55,20 @@ def _ioc_rw(nr: int, size: int) -> int:
     return (3 << 30) | (size << 16) | (ord("H") << 8) | nr
 
 
-def _find_node() -> tuple[Path, int]:
-    """Return (/dev/hidrawN, product_id) of the vendor config interface."""
+def keyboard_fix_active(descriptor: bytes) -> bool | None:
+    """True if the key array uses Usage Minimum 0 (fixed), False if 1, None if unknown."""
+    block = bytearray(descriptor[KEYS_OFFSET:KEYS_OFFSET + len(KEYS_PATTERN)])
+    if len(block) != len(KEYS_PATTERN):
+        return None
+    usage_min = block[KEYS_USAGE_MIN - KEYS_OFFSET]
+    block[KEYS_USAGE_MIN - KEYS_OFFSET] = 0x01
+    if bytes(block) != KEYS_PATTERN or usage_min not in (0x00, 0x01):
+        return None
+    return usage_min == 0x00
+
+
+def _find_node() -> tuple[Path, int, bytes]:
+    """Return (/dev/hidrawN, product_id, report descriptor) of the vendor config interface."""
     for node in sorted(HIDRAW_ROOT.iterdir()):
         uevent = (node / "device" / "uevent").read_text()
         hid_id = next((l for l in uevent.splitlines() if l.startswith("HID_ID=")), None)
@@ -57,13 +79,13 @@ def _find_node() -> tuple[Path, int]:
             continue
         descriptor = (node / "device" / "report_descriptor").read_bytes()
         if bytes([0x85, REPORT_ID_COMMAND]) in descriptor:
-            return Path("/dev") / node.name, pid
+            return Path("/dev") / node.name, pid, descriptor
     raise DeviceError("XM2w 4k not found. Is the mouse or dongle plugged in?")
 
 
 class Device:
     def __init__(self) -> None:
-        self.path, self.product_id = _find_node()
+        self.path, self.product_id, self.descriptor = _find_node()
         try:
             self._fd = os.open(self.path, os.O_RDWR)
         except PermissionError as exc:
@@ -81,6 +103,11 @@ class Device:
         os.close(self._fd)
 
     @property
+    def keyboard_fix(self) -> bool | None:
+        """Whether the HID-BPF keyboard fix is active (None if the descriptor is unknown)."""
+        return keyboard_fix_active(self.descriptor)
+
+    @property
     def is_wired(self) -> bool:
         return self.product_id == PID_WIRED
 
@@ -96,20 +123,31 @@ class Device:
         fcntl.ioctl(self._fd, _ioc_rw(0x07, length), buf)
         return bytes(buf)
 
+    def _sync(self) -> None:
+        # The official tool sends this before every command over the dongle.
+        self._set_feature(bytes([REPORT_ID_COMMAND, OP_SYNC, 0x01]).ljust(COMMAND_SIZE, b"\0"))
+        self._get_feature(REPORT_ID_COMMAND, COMMAND_SIZE)
+
     def _send(self, data: bytes) -> None:
         if not self.is_wired:
-            # The official tool sends this before every command over the dongle.
-            self._set_feature(bytes([REPORT_ID_COMMAND, OP_SYNC, 0x01]).ljust(COMMAND_SIZE, b"\0"))
-            self._get_feature(REPORT_ID_COMMAND, COMMAND_SIZE)
+            self._sync()
         self._set_feature(data.ljust(COMMAND_SIZE, b"\0"))
+
+    def _await_reply(self, opcode: int, delay: float) -> bytes:
+        """Wait for the reply to the last command, polling while it is pending."""
+        time.sleep(delay)
+        deadline = time.monotonic() + REPLY_TIMEOUT
+        while True:
+            reply = self._get_feature(REPORT_ID_COMMAND, COMMAND_SIZE)
+            if reply[1] == ACK_OK:
+                return reply
+            if reply[1] != ACK_PENDING or time.monotonic() >= deadline:
+                raise DeviceError(f"command {opcode:#04x} failed with status {reply[1]:#04x}")
+            time.sleep(REPLY_POLL_INTERVAL)
 
     def _query(self, opcode: int, delay: float = 0.15) -> bytes:
         self._send(bytes([REPORT_ID_COMMAND, opcode]))
-        time.sleep(delay if self.is_wired else delay * 2)
-        reply = self._get_feature(REPORT_ID_COMMAND, COMMAND_SIZE)
-        if reply[1] != ACK_OK:
-            raise DeviceError(f"command {opcode:#04x} failed with status {reply[1]:#04x}")
-        return reply
+        return self._await_reply(opcode, delay if self.is_wired else delay * 2)
 
     # --- information -----------------------------------------------------
 
@@ -139,10 +177,7 @@ class Device:
         buf[WRITE_CHUNK_INDEX] = chunk
         buf[WRITE_PAYLOAD_OFFSET:WRITE_PAYLOAD_OFFSET + len(payload)] = payload
         self._send(bytes(buf))
-        time.sleep(REPLY_DELAY_WIRED if self.is_wired else REPLY_DELAY_DONGLE)
-        ack = self._get_feature(REPORT_ID_COMMAND, COMMAND_SIZE)
-        if ack[1] != ACK_OK:
-            raise DeviceError(f"device rejected block {opcode:#04x}: status {ack[1]:#04x}")
+        self._await_reply(opcode, REPLY_DELAY_WIRED if self.is_wired else REPLY_DELAY_DONGLE)
 
     def write_config(self, old: Config, new: Config) -> None:
         """Send every settings block that changed from old to new, then verify."""

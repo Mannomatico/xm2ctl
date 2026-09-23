@@ -164,6 +164,7 @@ class MouseService:
                         "connection": "wired" if dev.is_wired else "wireless",
                         "firmware": self._firmware_info(dev),
                         "battery": battery,
+                        "keyboard_fix": dev.keyboard_fix,
                         "settings": config_to_json(dev.read_config()),
                     }
             except (DeviceError, OSError) as exc:
