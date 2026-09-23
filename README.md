@@ -27,8 +27,8 @@ supported yet. Reports and captures from other models are welcome.
 
 ## Features
 
-- Sensor: CPI levels (50–26000 in steps of 50), active level count, lift-off distance,
-  polling rate 1000/2000/4000 Hz (receiver only, like the official tool)
+- Sensor: CPI levels (50–26000 in steps of 50) with optional separate X and Y values,
+  active level count, lift-off distance, polling rate 1000/2000/4000 Hz (receiver only, like the official tool)
 - Tracking: angle snapping, ripple control, motion sync, slamclick and jitter filters,
   LED on lift-off
 - Clicks: debounce time per button, GX safe/speed mode for the main buttons
@@ -39,8 +39,7 @@ supported yet. Reports and captures from other models are welcome.
 - Battery level, mouse and receiver firmware versions
 - Every write is backed up first and verified by reading the config back
 
-Not supported: firmware updates and receiver pairing (use the official tool), X/Y split
-CPI values are implemented but not yet verified on hardware.
+Not supported: firmware updates and receiver pairing (use the official tool).
 
 ## Known issues
 

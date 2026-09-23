@@ -65,7 +65,7 @@ Run tests with `python3 -m unittest discover tests`. Deploy locally with `sh ins
 
 ## Open items
 
-- Verify X/Y split CPI values on hardware. The JSON settings treat split as one switch
-  for all levels; mixed per-level split (possible via the CLI) is lost in profiles.
+- The JSON settings treat X/Y split as one switch for all levels; mixed per-level split
+  (possible via the CLI, not tested on hardware) is lost in profiles.
 - Submit the HID-BPF fix upstream to udev-hid-bpf.
 - XM2w 4k v2 support needs captures from a v2 owner.

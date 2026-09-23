@@ -277,7 +277,7 @@ function renderSensor() {
       ${segmented("levels", [1, 2, 3, 4].map((n) => [n, n]), s.cpi_level_count)}</div>
     <ol class="levels">${levels}</ol>
     <div class="row"><span>Separate X and Y values
-      <p class="hint">Not yet verified on this mouse.</p></span>
+      <p class="hint">Different sensitivity for horizontal and vertical movement.</p></span>
       <input type="checkbox" class="switch" id="xy-split" ${s.xy_split ? "checked" : ""}></div>
     <div class="row"><span>Lift-off distance</span>
       ${segmented("lod", [[1, "1 mm"], [2, "2 mm"]], s.lod)}</div>

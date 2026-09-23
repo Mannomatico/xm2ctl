@@ -97,10 +97,13 @@ report ID byte.
 | 28 | 1 | motion sync | `0`/`1` (1) |
 | 29 | 1 | unknown | always `02` so far |
 | 30 | 1 | CPI level count | `1`–`4` |
-| 51 | 4 × 5 | CPI levels | `[xy_split, x_lo, x_hi, y_lo, y_hi]`, little endian |
+| 51 | 4 × 5 | CPI levels | `[xy_split, x_lo, x_hi, y_lo, y_hi]`, little endian (2) |
 | 71 | 8 × 7 | buttons | see below |
 
 (1) 27 and 28 were only observed changing together; the assignment follows egctl.
+(2) Verified on hardware with split enabled on all four levels (Y = 4 × X): the
+    written bytes read back unchanged and vertical movement was clearly faster. The
+    unknown byte 5 of the basic write block stays `0`; no global switch is needed.
 
 In wired mode the official tool always displays and writes 1000 Hz, which silently
 resets a higher polling rate set over the receiver.
