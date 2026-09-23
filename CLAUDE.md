@@ -10,7 +10,8 @@ Context for AI assistants working on this repository.
   can be run directly (`python3 -m xm2ctl info`). Ask before any command that writes to
   the mouse, and never run commands with `sudo` yourself; hand them to the maintainer.
 - Small, low-risk changes (docs, screenshots, small fixes) may be committed directly to
-  `main`. Use a feature branch for larger or risky changes.
+  `main`. Use a feature branch for larger or risky changes. Never push; the maintainer
+  pushes.
 - Every supported feature must be verified on real hardware before it is documented as
   supported. Mark unverified behaviour as such in code comments and docs.
 
