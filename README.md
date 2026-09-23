@@ -52,7 +52,7 @@ Details in [PROTOCOL.md](PROTOCOL.md).
 
 ## Install
 
-    git clone https://github.com/<user>/xm2ctl.git
+    git clone https://github.com/mannomatico/xm2ctl.git
     cd xm2ctl
     sh install.sh
 
