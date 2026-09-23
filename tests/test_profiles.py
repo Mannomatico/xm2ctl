@@ -73,6 +73,13 @@ class ProfilesTest(unittest.TestCase):
         self.assertEqual(profiles.apply(cfg, settings, wired=False), [])
         self.assertEqual(cfg.polling_rate, 4000)
 
+    def test_matches_ignores_polling_over_the_cable(self):
+        current = config_to_json(sample_config())
+        profile = dict(current, polling=4000)
+        self.assertFalse(profiles.matches(profile, current, wired=False))
+        self.assertTrue(profiles.matches(profile, current, wired=True))
+        self.assertFalse(profiles.matches(dict(profile, lod=1), current, wired=True))
+
 
 if __name__ == "__main__":
     unittest.main()

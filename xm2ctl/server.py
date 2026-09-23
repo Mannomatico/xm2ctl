@@ -4,13 +4,16 @@ Run with:  python3 -m xm2ctl.server [--port 8341]
 
 The server only listens on 127.0.0.1. Requests with a foreign Host or Origin
 header are rejected (DNS rebinding / cross-site protection), and every write
-needs the per-start token that is embedded in the served page.
+needs the per-start token that is embedded in the served page. The token is
+also written to $XDG_RUNTIME_DIR/xm2ctl/token (readable by the user only) for
+the GNOME Shell extension.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import secrets
 import subprocess
 import threading
@@ -43,6 +46,7 @@ STATIC_FILES = {
     "/style.css": "text/css; charset=utf-8",
 }
 MAX_BODY = 64 * 1024
+RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR")
 
 
 # --- device service ----------------------------------------------------------
@@ -68,6 +72,7 @@ class MouseService:
         self.battery_time: float | None = None
         self.warned = False
         self._firmware: dict[tuple[str, int], dict] = {}
+        self.settings: dict | None = None  # last settings read from or written to the mouse
 
     def _record_battery(self, percent: int, dev: Device) -> None:
         self.battery = percent
@@ -97,11 +102,16 @@ class MouseService:
                         "firmware": self._firmware_info(dev),
                         "battery": battery,
                         "keyboard_fix": dev.keyboard_fix,
-                        "settings": config_to_json(dev.read_config()),
+                        "settings": self._read_settings(dev),
                     }
             except (DeviceError, OSError) as exc:
                 self._firmware.clear()
+                self.settings = None
                 return {"connected": False, "error": str(exc)}
+
+    def _read_settings(self, dev: Device) -> dict:
+        self.settings = config_to_json(dev.read_config())
+        return self.settings
 
     def battery_status(self) -> dict:
         """Cached battery state for the panel indicator; never talks to the mouse."""
@@ -123,12 +133,32 @@ class MouseService:
                 if new.diff(old):
                     save_backup(old)
                     dev.write_config(old, new)
+                self.settings = config_to_json(new)
         return self.state()
 
-    @staticmethod
-    def profiles() -> dict:
-        return {"profiles": [{"name": name, "settings": settings}
-                             for name, settings in profiles.load_all().items()]}
+    def profiles(self) -> dict:
+        """Saved profiles and the one matching the cached mouse settings (never reads the mouse)."""
+        stored = profiles.load_all()
+        wired = self.connection == "wired"
+        active = None
+        if self.settings is not None:
+            active = next((name for name, settings in stored.items()
+                           if profiles.matches(settings, self.settings, wired)), None)
+        return {"profiles": [{"name": name, "settings": settings} for name, settings in stored.items()],
+                "active": active}
+
+    def apply_profile(self, name: str) -> dict:
+        settings = profiles.load(name)
+        with self.lock:
+            with Device() as dev:
+                old = dev.read_config()
+                new = old.copy()
+                notes = profiles.apply(new, settings, dev.is_wired)
+                if new.diff(old):
+                    save_backup(old)
+                    dev.write_config(old, new)
+                self.settings = config_to_json(new)
+        return {**self.profiles(), "notes": notes}
 
     def save_profile(self, name: str, settings: dict) -> dict:
         """Validate settings against the current config and store them; nothing is written."""
@@ -150,10 +180,13 @@ class MouseService:
                 dev = Device()
             except (DeviceError, OSError):
                 self.connection = None  # receiver or cable unplugged
+                self.settings = None
                 return
             try:
                 with dev:
                     self._record_battery(dev.battery_percent(), dev)
+                    if self.settings is None:  # once per connection, for the active profile
+                        self._read_settings(dev)
             except (DeviceError, OSError):
                 pass  # mouse asleep: keep the last known value
 
@@ -178,6 +211,7 @@ def make_handler(service: MouseService, token: str, port: int):
         "/api/settings": lambda data: {**service.apply(data), "limits": limits},
         "/api/profiles/save": lambda data: service.save_profile(data["name"], data["settings"]),
         "/api/profiles/delete": lambda data: service.delete_profile(data["name"]),
+        "/api/profiles/apply": lambda data: service.apply_profile(data["name"]),
     }
 
     class Handler(BaseHTTPRequestHandler):
@@ -246,6 +280,19 @@ def make_handler(service: MouseService, token: str, port: int):
     return Handler
 
 
+def write_token(token: str) -> None:
+    """Store the write token for the GNOME Shell extension, readable by the user only."""
+    if not RUNTIME_DIR:
+        return
+    directory = Path(RUNTIME_DIR) / "xm2ctl"
+    directory.mkdir(mode=0o700, exist_ok=True)
+    path = directory / "token"
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as file:
+        file.write(token)
+    os.chmod(path, 0o600)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="xm2ctl.server")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
@@ -256,6 +303,7 @@ def main() -> None:
     service = MouseService(args.low_battery, args.interval)
     threading.Thread(target=service.monitor, daemon=True).start()
     token = secrets.token_urlsafe(32)
+    write_token(token)
     httpd = ThreadingHTTPServer((HOST, args.port), make_handler(service, token, args.port))
     print(f"xm2ctl web UI on http://{HOST}:{args.port}")
     httpd.serve_forever()

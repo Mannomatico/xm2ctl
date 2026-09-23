@@ -84,6 +84,14 @@ def delete(name: str, directory: Path = PROFILE_DIR) -> None:
         raise ValueError(f"Profile '{name}' does not exist.") from None
 
 
+def matches(profile: dict, current: dict, wired: bool) -> bool:
+    """True if a profile equals the current settings. Over the cable the polling rate is ignored."""
+    if wired:
+        profile = {key: value for key, value in profile.items() if key != "polling"}
+        current = {key: value for key, value in current.items() if key != "polling"}
+    return profile == current
+
+
 def apply(cfg: Config, settings: dict, wired: bool) -> list[str]:
     """Apply profile settings to cfg. Returns notes about settings that were skipped."""
     notes = []

@@ -28,7 +28,8 @@ Unofficial Linux configuration tool for the Endgame Gear XM2w 4k (v1, mouse firm
 - `xm2ctl/__main__.py`: CLI (`info`, `dump`, `set`, `restore`, `profile`)
 - `xm2ctl/server.py`: local web UI service (127.0.0.1:8341), battery monitor, `/api/battery`
 - `xm2ctl/web/`: web UI (vanilla HTML/CSS/JS, strict CSP, no inline scripts)
-- `gnome-extension/`: GNOME Shell top bar battery indicator (reads `/api/battery`)
+- `gnome-extension/`: GNOME Shell top bar battery indicator and profile switcher
+  (`/api/battery`, `/api/profiles`; write token from `$XDG_RUNTIME_DIR/xm2ctl/token`)
 - `hid-bpf/`: HID-BPF report descriptor fix for the keyboard bug (GPL-2.0-only)
 - `tests/`: unit tests pinned to bytes captured from the official Windows tool
 - `PROTOCOL.md`: the reverse engineered protocol; keep it in sync with code changes

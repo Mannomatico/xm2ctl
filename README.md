@@ -78,14 +78,19 @@ Options go into `ExecStart` in `~/.config/systemd/user/xm2ctl.service`:
 
 The server listens on 127.0.0.1 only, rejects requests with a foreign `Host` or `Origin`
 header and requires a random per-start token for every write, so other websites open in
-your browser cannot change the mouse settings.
+your browser cannot change the mouse settings. The token is also stored in
+`$XDG_RUNTIME_DIR/xm2ctl/token`, readable by your user only, for the top bar extension.
 
-## Top bar battery indicator (GNOME)
+## Top bar indicator (GNOME)
 
 `install.sh` also installs a small GNOME Shell extension that shows the battery level in
 the top bar, next to a mouse icon. It hides itself while no mouse is connected, turns
 red at the low battery threshold and opens the web UI from its menu. It reads the cached
 value from the service (`/api/battery`) and never talks to the mouse itself.
+
+Its menu also lists your [profiles](#profiles), with a check mark at the one that matches
+the mouse. Selecting a profile writes it to the mouse through the service and confirms
+with a notification.
 
 On Wayland, log out and back in once after the first install, then enable it:
 
@@ -120,7 +125,8 @@ profile is skipped, because it can only be changed over the receiver.
     python3 -m xm2ctl profile delete gaming
 
 In the web UI, "Load" fills in the page and "Save to mouse" applies it. The profile that
-matches the mouse is marked "on the mouse".
+matches the mouse is marked "on the mouse". The GNOME top bar menu switches profiles
+directly.
 
 ## Keyboard fix (HID-BPF)
 
