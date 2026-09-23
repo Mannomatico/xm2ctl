@@ -8,6 +8,8 @@ Examples:
     python3 -m xm2ctl set --map forward key:f5 --map back media:play-pause
     python3 -m xm2ctl set --polling 4000        (dongle only)
     python3 -m xm2ctl restore backup.bin
+    python3 -m xm2ctl profile save gaming
+    python3 -m xm2ctl profile load gaming
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ import sys
 import time
 from pathlib import Path
 
+from . import profiles
 from .device import Device, DeviceError
 from .keys import HELP as ACTION_HELP
 from .keys import format_action, parse_action
@@ -30,6 +33,7 @@ from .protocol import (
     SPDT_BUTTONS,
     Config,
 )
+from .settings import config_to_json
 
 REMAPPABLE_BUTTONS = BUTTONS[1:]  # left can only be swapped via --left-handed
 
@@ -164,6 +168,34 @@ def cmd_restore(dev: Device, args: argparse.Namespace) -> None:
     confirm_and_write(dev, old, new, args.yes)
 
 
+def cmd_profile(args: argparse.Namespace) -> None:
+    if args.action == "list":
+        names = profiles.list_profiles()
+        print("\n".join(names) if names else f"No profiles in {profiles.PROFILE_DIR}")
+        return
+    if args.action == "delete":
+        profiles.delete(args.name)
+        print(f"Deleted profile '{args.name}'.")
+        return
+
+    name = profiles.check_name(args.name)
+    with Device() as dev:
+        if args.action == "save":
+            if (profiles.exists(name) and not args.yes
+                    and input(f"Overwrite profile '{name}'? [y/N] ").strip().lower() != "y"):
+                print("Aborted.")
+                return
+            path = profiles.save(name, config_to_json(dev.read_config()))
+            print(f"Saved current settings to {path}")
+        else:
+            settings = profiles.load(name)
+            old = dev.read_config()
+            new = old.copy()
+            for note in profiles.apply(new, settings, dev.is_wired):
+                print(f"note: {note}", file=sys.stderr)
+            confirm_and_write(dev, old, new, args.yes)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="xm2ctl", description="Configure the Endgame Gear XM2w 4k")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -200,6 +232,17 @@ def build_parser() -> argparse.ArgumentParser:
                    help=f"multiclick filter; buttons: {', '.join(FILTER_BUTTONS)}")
     s.add_argument("--spdt", nargs=2, action="append", metavar=("BUTTON", "safe|speed"),
                    help=f"GX mode for {' / '.join(SPDT_BUTTONS)}")
+
+    profile = sub.add_parser("profile", help="save and load named settings profiles",
+                             description=f"Profiles are stored in {profiles.PROFILE_DIR}.")
+    actions = profile.add_subparsers(dest="action", required=True)
+    actions.add_parser("list", help="list saved profiles")
+    for action, text in (("save", "save the current mouse settings as a profile"),
+                         ("load", "write a profile to the mouse")):
+        p = actions.add_parser(action, help=text)
+        p.add_argument("name")
+        p.add_argument("-y", "--yes", action="store_true", help="do not ask for confirmation")
+    actions.add_parser("delete", help="delete a profile").add_argument("name")
     return parser
 
 
@@ -212,9 +255,12 @@ def main() -> None:
 
     handlers = {"info": cmd_info, "dump": cmd_dump, "set": cmd_set, "restore": cmd_restore}
     try:
-        with Device() as dev:
-            handlers[args.command](dev, args)
-    except (DeviceError, ValueError) as exc:
+        if args.command == "profile":
+            cmd_profile(args)
+        else:
+            with Device() as dev:
+                handlers[args.command](dev, args)
+    except (DeviceError, ValueError, OSError) as exc:
         sys.exit(f"error: {exc}")
 
 

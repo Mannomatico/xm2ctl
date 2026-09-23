@@ -253,6 +253,9 @@ input[type="number"] { width: 6.2rem; text-align: right; }
 .timer .minutes { display: flex; align-items: center; gap: 0.4rem; color: var(--muted); }
 .timer input[type="number"] { width: 4.5rem; margin: 0; }
 
+.profile-row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+.profile-row select, .profile-row input[type="text"] { flex: 1 1 10rem; min-width: 0; }
+
 .levels { list-style: none; margin: 0; padding: 0; }
 .levels li { display: flex; align-items: center; gap: 0.8rem; padding: 0.45rem 0; }
 .levels li.inactive { opacity: 0.4; }

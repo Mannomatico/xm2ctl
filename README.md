@@ -35,6 +35,7 @@ supported yet. Reports and captures from other models are welcome.
 - Buttons: remap to mouse buttons, media keys, scroll, CPI cycling, keyboard keys and
   combinations (see known issues); left-handed mode
 - Power: power saving and deep sleep timers
+- Profiles: save named settings on this computer and switch between them
 - Battery level, mouse and receiver firmware versions
 - Every write is backed up first and verified by reading the config back
 
@@ -105,6 +106,21 @@ If it stays disabled, user extensions may be switched off globally:
     python3 -m xm2ctl restore ~/.local/state/xm2ctl/backup-YYYYMMDD-HHMMSS.bin
 
 Run `python3 -m xm2ctl set --help` for all options.
+
+## Profiles
+
+The mouse has no profile slots of its own, so profiles live on the computer, as readable
+JSON files in `~/.config/xm2ctl/profiles/`. Loading a profile writes it to the mouse like
+any other change (with backup and verification). Over the cable the polling rate of a
+profile is skipped, because it can only be changed over the receiver.
+
+    python3 -m xm2ctl profile save gaming      # current mouse settings
+    python3 -m xm2ctl profile list
+    python3 -m xm2ctl profile load gaming
+    python3 -m xm2ctl profile delete gaming
+
+In the web UI, "Load" fills in the page and "Save to mouse" applies it. The profile that
+matches the mouse is marked "on the mouse".
 
 ## Keyboard fix (HID-BPF)
 

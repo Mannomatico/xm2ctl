@@ -27,12 +27,33 @@ const MOUSE_VALUES = ["left", "right", "middle", "back", "forward"];
 
 let state = null;      // last state from the mouse
 let draft = null;      // settings being edited
+let profiles = [];     // [{name, settings}] stored on this computer
+let selectedProfile = "";
 let selected = "forward";
 let busy = false;
 
 const $ = (id) => document.getElementById(id);
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const isDirty = () => Boolean(draft) && JSON.stringify(draft) !== JSON.stringify(state.settings);
+
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+  }
+  return value;
+}
+
+// Compares settings independent of key order. Over the cable the polling rate cannot be
+// set, so it is left out there.
+function sameSettings(a, b) {
+  const normalize = (settings) => {
+    const copy = clone(settings);
+    if (state.connection === "wired") delete copy.polling;
+    return JSON.stringify(canonical(copy));
+  };
+  return normalize(a) === normalize(b);
+}
 
 function escapeHtml(text) {
   return String(text).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -51,15 +72,35 @@ function describeAction(action) {
 
 // --- server ---------------------------------------------------------------
 
-async function load() {
+async function fetchProfiles() {
   try {
-    const response = await fetch("/api/state");
-    state = await response.json();
+    const response = await fetch("/api/profiles");
+    profiles = (await response.json()).profiles || [];
   } catch (error) {
-    state = { connected: false, error: "The xm2ctl service is not running." };
+    profiles = [];
   }
+}
+
+async function load() {
+  const [result] = await Promise.all([
+    fetch("/api/state").then((response) => response.json())
+      .catch(() => ({ connected: false, error: "The xm2ctl service is not running." })),
+    fetchProfiles(),
+  ]);
+  state = result;
   if (state.connected) draft = clone(state.settings);
   render();
+}
+
+async function post(path, body) {
+  const response = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-XM2-Token": TOKEN },
+    body: JSON.stringify(body),
+  });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || `Request failed (${response.status})`);
+  return result;
 }
 
 async function save() {
@@ -67,14 +108,7 @@ async function save() {
   setMessage("Saving to the mouse…");
   updateSaveBar();
   try {
-    const response = await fetch("/api/settings", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-XM2-Token": TOKEN },
-      body: JSON.stringify(draft),
-    });
-    const result = await response.json();
-    if (!response.ok) throw new Error(result.error || `Request failed (${response.status})`);
-    state = result;
+    state = await post("/api/settings", draft);
     draft = clone(state.settings);
     render();
     setMessage("Saved to the mouse.", "ok");
@@ -98,6 +132,7 @@ function render() {
     $("offline-reason").textContent = state ? state.error : "";
     return;
   }
+  renderProfiles();
   renderSensor();
   renderTracking();
   renderPower();
@@ -132,6 +167,93 @@ function segmented(name, options, current, disabled = false) {
       ${value === current ? "checked" : ""} ${disabled ? "disabled" : ""}>
       <label for="${id}">${label}</label>`;
   }).join("")}</div>`;
+}
+
+function renderProfiles() {
+  const typed = $("profile-name") ? $("profile-name").value : "";
+  const onMouse = profiles.filter((p) => sameSettings(p.settings, state.settings)).map((p) => p.name);
+  if (!profiles.some((p) => p.name === selectedProfile)) {
+    selectedProfile = onMouse[0] || (profiles[0] ? profiles[0].name : "");
+  }
+  let status = "No profiles yet. Save the current settings to create one.";
+  if (onMouse.length) status = `The mouse uses ${onMouse.join(", ")}.`;
+  else if (profiles.length) status = "The mouse settings match no saved profile.";
+
+  $("profiles").innerHTML = `
+    <p class="hint">${escapeHtml(status)}</p>
+    ${profiles.length ? `<div class="row profile-row">
+      <select id="profile-select" aria-label="Saved profiles">${profiles.map((p) => `
+        <option value="${escapeHtml(p.name)}" ${p.name === selectedProfile ? "selected" : ""}>
+          ${escapeHtml(p.name)}${onMouse.includes(p.name) ? " (on the mouse)" : ""}</option>`).join("")}
+      </select>
+      <button type="button" id="profile-load">Load</button>
+      <button type="button" id="profile-delete">Delete</button></div>` : ""}
+    <div class="row profile-row">
+      <input type="text" id="profile-name" maxlength="40" placeholder="New profile name"
+        aria-label="New profile name" value="${escapeHtml(typed)}" spellcheck="false" autocomplete="off">
+      <button type="button" id="profile-save">Save as profile</button></div>
+    <p class="hint">Profiles are stored on this computer. Load fills in the settings on this page,
+      Save to mouse applies them. Save as profile stores the settings shown here.</p>`;
+
+  const select = $("profile-select");
+  if (select) select.addEventListener("change", () => { selectedProfile = select.value; });
+  if ($("profile-load")) $("profile-load").addEventListener("click", loadProfile);
+  if ($("profile-delete")) $("profile-delete").addEventListener("click", deleteProfile);
+  $("profile-save").addEventListener("click", saveProfile);
+  $("profile-name").addEventListener("keydown", (event) => { if (event.key === "Enter") saveProfile(); });
+}
+
+function loadProfile() {
+  const profile = profiles.find((p) => p.name === selectedProfile);
+  if (!profile || busy) return;
+  if (isDirty() && !confirm("Discard your unsaved changes and load the profile?")) return;
+  draft = { ...clone(state.settings), ...clone(profile.settings) };
+  let note = "";
+  if (state.connection === "wired" && draft.polling !== state.settings.polling) {
+    draft.polling = state.settings.polling;
+    note = " The polling rate stays unchanged over the cable.";
+  }
+  render();
+  setMessage(isDirty()
+    ? `Profile ${profile.name} loaded. Press Save to mouse to apply it.${note}`
+    : `Profile ${profile.name} is already on the mouse.`);
+}
+
+async function profileRequest(path, body, done) {
+  let message = [done, "ok"];
+  busy = true;
+  updateSaveBar();
+  try {
+    profiles = (await post(path, body)).profiles;
+    if (path.endsWith("/save")) $("profile-name").value = "";
+    renderProfiles();
+  } catch (error) {
+    message = [`Profile not changed: ${error.message}`, "error"];
+  } finally {
+    busy = false;
+    updateSaveBar();
+    setMessage(...message);
+  }
+}
+
+async function saveProfile() {
+  const input = $("profile-name");
+  const name = input.value.trim();
+  if (busy) return;
+  if (!name) {
+    setMessage("Enter a name for the profile.", "error");
+    input.focus();
+    return;
+  }
+  if (profiles.some((p) => p.name === name) && !confirm(`Overwrite profile ${name}?`)) return;
+  selectedProfile = name;
+  await profileRequest("/api/profiles/save", { name, settings: draft }, `Profile ${name} saved.`);
+}
+
+async function deleteProfile() {
+  const name = selectedProfile;
+  if (!name || busy || !confirm(`Delete profile ${name}?`)) return;
+  await profileRequest("/api/profiles/delete", { name }, `Profile ${name} deleted.`);
 }
 
 function renderSensor() {

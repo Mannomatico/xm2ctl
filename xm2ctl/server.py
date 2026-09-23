@@ -19,24 +19,21 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from . import profiles
 from .__main__ import save_backup
 from .device import Device, DeviceError
-from .keys import MEDIA, format_action, parse_action
+from .keys import MEDIA
 from .protocol import (
-    BUTTONS,
-    CPI_COUNT,
     CPI_MAX,
     CPI_MIN,
     CPI_STEP,
     DEBOUNCE_MAX_MS,
     FILTER_BUTTONS,
-    OFF_DEEP_SLEEP,
-    OFF_POWER_SAVING,
     SPDT_BUTTONS,
     TIMER_MAX,
     TIMER_MIN,
-    Config,
 )
+from .settings import apply_json, config_to_json
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 8341
@@ -46,75 +43,6 @@ STATIC_FILES = {
     "/style.css": "text/css; charset=utf-8",
 }
 MAX_BODY = 64 * 1024
-REMAPPABLE = BUTTONS[1:]
-TIMERS = {"power_saving": OFF_POWER_SAVING, "deep_sleep": OFF_DEEP_SLEEP}
-BOOL_SETTINGS = ("angle_snapping", "ripple_control", "motion_sync", "lift_off_led",
-                 "slamclick_filter", "jitter_filter")
-
-
-# --- JSON mapping ------------------------------------------------------------
-
-def config_to_json(cfg: Config) -> dict:
-    cpis = [cfg.get_cpi(level) for level in range(1, CPI_COUNT + 1)]
-    return {
-        "lod": cfg.lod_mm,
-        "polling": cfg.polling_rate,
-        **{name: getattr(cfg, name) for name in BOOL_SETTINGS},
-        **{
-            name: {"enabled": cfg.get_timer(offset) is not None,
-                   "minutes": cfg.get_timer_minutes(offset)}
-            for name, offset in TIMERS.items()
-        },
-        "cpi_level_count": cfg.cpi_level_count,
-        "xy_split": any(split for _x, _y, split in cpis),
-        "cpi": [{"x": x, "y": y} for x, y, _split in cpis],
-        "left_handed": cfg.left_handed,
-        "buttons": {
-            button: {
-                "action": format_action(cfg.get_mapping(button)),
-                "click": cfg.get_click_setting(button) if button in FILTER_BUTTONS else None,
-            }
-            for button in BUTTONS
-        },
-    }
-
-
-def apply_json(cfg: Config, data: dict, wired: bool) -> None:
-    """Apply a (partial) settings object from the web UI to cfg."""
-    if "lod" in data:
-        cfg.lod_mm = int(data["lod"])
-    if "polling" in data and data["polling"] != cfg.polling_rate:
-        if wired:
-            raise ValueError("The polling rate can only be changed over the wireless receiver.")
-        cfg.polling_rate = int(data["polling"])
-    for name in BOOL_SETTINGS:
-        if name in data:
-            setattr(cfg, name, bool(data[name]))
-    for name, offset in TIMERS.items():
-        if name in data:
-            cfg.set_timer(offset, int(data[name]["minutes"]))
-            if not data[name]["enabled"]:
-                cfg.set_timer(offset, None)
-    if "cpi_level_count" in data:
-        cfg.cpi_level_count = int(data["cpi_level_count"])
-    if "cpi" in data:
-        split = bool(data.get("xy_split", False))
-        for level, entry in enumerate(data["cpi"][:CPI_COUNT], start=1):
-            cfg.set_cpi(level, int(entry["x"]), int(entry["y"]) if split else None)
-    # Handedness first, so the button actions sent along with it already match.
-    if "left_handed" in data and bool(data["left_handed"]) != cfg.left_handed:
-        cfg.left_handed = bool(data["left_handed"])
-    for button, entry in data.get("buttons", {}).items():
-        if button in REMAPPABLE and entry.get("action"):
-            new_mapping = parse_action(entry["action"])
-            if new_mapping.ljust(6, b"\0") != cfg.get_mapping(button):
-                cfg.set_mapping(button, new_mapping)
-        click = entry.get("click")
-        if button in FILTER_BUTTONS and click is not None:
-            if click in ("safe", "speed"):
-                cfg.set_spdt(button, click)
-            else:
-                cfg.set_debounce(button, int(click))
 
 
 # --- device service ----------------------------------------------------------
@@ -197,6 +125,25 @@ class MouseService:
                     dev.write_config(old, new)
         return self.state()
 
+    @staticmethod
+    def profiles() -> dict:
+        return {"profiles": [{"name": name, "settings": settings}
+                             for name, settings in profiles.load_all().items()]}
+
+    def save_profile(self, name: str, settings: dict) -> dict:
+        """Validate settings against the current config and store them; nothing is written."""
+        name = profiles.check_name(name)
+        with self.lock:
+            with Device() as dev:
+                cfg = dev.read_config()
+        apply_json(cfg, settings, wired=False)
+        profiles.save(name, config_to_json(cfg))
+        return self.profiles()
+
+    def delete_profile(self, name: str) -> dict:
+        profiles.delete(name)
+        return self.profiles()
+
     def check_battery(self) -> None:
         with self.lock:
             try:
@@ -226,6 +173,11 @@ def make_handler(service: MouseService, token: str, port: int):
         "debounce_max": DEBOUNCE_MAX_MS, "timer_min": TIMER_MIN, "timer_max": TIMER_MAX,
         "spdt_buttons": list(SPDT_BUTTONS), "filter_buttons": list(FILTER_BUTTONS),
         "media": list(MEDIA),
+    }
+    post_routes = {
+        "/api/settings": lambda data: {**service.apply(data), "limits": limits},
+        "/api/profiles/save": lambda data: service.save_profile(data["name"], data["settings"]),
+        "/api/profiles/delete": lambda data: service.delete_profile(data["name"]),
     }
 
     class Handler(BaseHTTPRequestHandler):
@@ -267,10 +219,13 @@ def make_handler(service: MouseService, token: str, port: int):
                 return self._json(HTTPStatus.OK, service.battery_status())
             if self.path == "/api/state":
                 return self._json(HTTPStatus.OK, {**service.state(), "limits": limits})
+            if self.path == "/api/profiles":
+                return self._json(HTTPStatus.OK, service.profiles())
             self._json(HTTPStatus.NOT_FOUND, {"error": "not found"})
 
         def do_POST(self) -> None:
-            if (not self._trusted() or self.path != "/api/settings"
+            route = post_routes.get(self.path)
+            if (not self._trusted() or route is None
                     or not secrets.compare_digest(self.headers.get("X-XM2-Token", ""), token)
                     or self.headers.get("Content-Type") != "application/json"):
                 return self._json(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
@@ -279,12 +234,14 @@ def make_handler(service: MouseService, token: str, port: int):
                 return self._json(HTTPStatus.BAD_REQUEST, {"error": "invalid request size"})
             try:
                 data = json.loads(self.rfile.read(length))
-                state = service.apply(data)
-            except (ValueError, KeyError, TypeError) as exc:
+                if not isinstance(data, dict):
+                    raise ValueError("expected a JSON object")
+                result = route(data)
+            except (ValueError, KeyError, TypeError, AttributeError) as exc:
                 return self._json(HTTPStatus.BAD_REQUEST, {"error": str(exc)})
             except (DeviceError, OSError) as exc:
                 return self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"error": str(exc)})
-            self._json(HTTPStatus.OK, {**state, "limits": limits})
+            self._json(HTTPStatus.OK, result)
 
     return Handler
 

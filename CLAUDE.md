@@ -20,7 +20,9 @@ Unofficial Linux configuration tool for the Endgame Gear XM2w 4k (v1, mouse firm
 - `xm2ctl/protocol.py`: config offsets, `Config` model, write payloads
 - `xm2ctl/device.py`: hidraw I/O, command/reply handling, writes
 - `xm2ctl/keys.py`: button action parsing and formatting
-- `xm2ctl/__main__.py`: CLI (`info`, `dump`, `set`, `restore`)
+- `xm2ctl/settings.py`: `Config` <-> JSON settings (web UI and profiles)
+- `xm2ctl/profiles.py`: named profiles as JSON in `~/.config/xm2ctl/profiles/`
+- `xm2ctl/__main__.py`: CLI (`info`, `dump`, `set`, `restore`, `profile`)
 - `xm2ctl/server.py`: local web UI service (127.0.0.1:8341), battery monitor, `/api/battery`
 - `xm2ctl/web/`: web UI (vanilla HTML/CSS/JS, strict CSP, no inline scripts)
 - `gnome-extension/`: GNOME Shell top bar battery indicator (reads `/api/battery`)
@@ -59,7 +61,7 @@ Run tests with `python3 -m unittest discover tests`. Deploy locally with `sh ins
 
 ## Open items
 
-- Verify X/Y split CPI values on hardware.
+- Verify X/Y split CPI values on hardware. The JSON settings treat split as one switch
+  for all levels; mixed per-level split (possible via the CLI) is lost in profiles.
 - Submit the HID-BPF fix upstream to udev-hid-bpf.
-- Open a friendly issue at qaustria/xm2w with our findings.
 - XM2w 4k v2 support needs captures from a v2 owner.
