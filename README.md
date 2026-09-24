@@ -68,6 +68,11 @@ Requirements: Linux with systemd, Python 3.9 or newer, `gdbus` for notifications
 Open http://127.0.0.1:8341 or start "XM2w 4k" from the app grid. The service checks the
 battery every 2 minutes and shows a desktop notification once it drops to 20 % or less.
 
+Over the wireless receiver, the mouse is only queried while it is in use. A query to a
+mouse in power saving or deep sleep can block the receiver until it is replugged (a
+firmware issue, see [PROTOCOL.md](PROTOCOL.md)). The battery level therefore updates
+while you use the mouse, and the web UI asks you to move the mouse if it has been idle.
+
 Options go into `ExecStart` in `~/.config/systemd/user/xm2ctl.service`:
 
     --port 8341  --low-battery 20  --interval 120
@@ -109,7 +114,8 @@ If it stays disabled, user extensions may be switched off globally:
     python3 -m xm2ctl dump config.bin
     python3 -m xm2ctl restore ~/.local/state/xm2ctl/backup-YYYYMMDD-HHMMSS.bin
 
-Run `python3 -m xm2ctl set --help` for all options.
+Run `python3 -m xm2ctl set --help` for all options. Over the receiver the CLI asks you
+to move the mouse first unless the service has seen it move in the last few seconds.
 
 ## Profiles
 
