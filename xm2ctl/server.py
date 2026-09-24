@@ -16,6 +16,7 @@ import json
 import os
 import secrets
 import subprocess
+import sys
 import threading
 import time
 from http import HTTPStatus
@@ -73,6 +74,14 @@ class MouseService:
         self.warned = False
         self._firmware: dict[tuple[str, int], dict] = {}
         self.settings: dict | None = None  # last settings read from or written to the mouse
+        self._last_error: str | None = None
+
+    def _log_device(self, error: Exception | None) -> None:
+        """Log device errors to the journal, once per change instead of every poll."""
+        message = None if error is None else f"{type(error).__name__}: {error}"
+        if message != self._last_error:
+            print(f"device: {message or 'available again'}", file=sys.stderr, flush=True)
+            self._last_error = message
 
     def _record_battery(self, percent: int, dev: Device) -> None:
         self.battery = percent
@@ -96,6 +105,7 @@ class MouseService:
                 with Device() as dev:
                     battery = dev.battery_percent()
                     self._record_battery(battery, dev)
+                    self._log_device(None)
                     return {
                         "connected": True,
                         "connection": "wired" if dev.is_wired else "wireless",
@@ -105,6 +115,7 @@ class MouseService:
                         "settings": self._read_settings(dev),
                     }
             except (DeviceError, OSError) as exc:
+                self._log_device(exc)
                 self._firmware.clear()
                 self.settings = None
                 return {"connected": False, "error": str(exc)}
@@ -178,7 +189,8 @@ class MouseService:
         with self.lock:
             try:
                 dev = Device()
-            except (DeviceError, OSError):
+            except (DeviceError, OSError) as exc:
+                self._log_device(exc)
                 self.connection = None  # receiver or cable unplugged
                 self.settings = None
                 return
@@ -187,8 +199,9 @@ class MouseService:
                     self._record_battery(dev.battery_percent(), dev)
                     if self.settings is None:  # once per connection, for the active profile
                         self._read_settings(dev)
-            except (DeviceError, OSError):
-                pass  # mouse asleep: keep the last known value
+                self._log_device(None)
+            except (DeviceError, OSError) as exc:
+                self._log_device(exc)  # mouse asleep: keep the last known battery value
 
     def monitor(self) -> None:
         while True:

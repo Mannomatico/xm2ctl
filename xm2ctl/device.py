@@ -69,6 +69,7 @@ def keyboard_fix_active(descriptor: bytes) -> bool | None:
 
 def _find_node() -> tuple[Path, int, bytes]:
     """Return (/dev/hidrawN, product_id, report descriptor) of the vendor config interface."""
+    seen = []
     for node in sorted(HIDRAW_ROOT.iterdir()):
         uevent = (node / "device" / "uevent").read_text()
         hid_id = next((l for l in uevent.splitlines() if l.startswith("HID_ID=")), None)
@@ -80,6 +81,10 @@ def _find_node() -> tuple[Path, int, bytes]:
         descriptor = (node / "device" / "report_descriptor").read_bytes()
         if bytes([0x85, REPORT_ID_COMMAND]) in descriptor:
             return Path("/dev") / node.name, pid, descriptor
+        seen.append(node.name)
+    if seen:
+        raise DeviceError(f"XM2w 4k found ({', '.join(seen)}), but not its configuration "
+                          "interface. Unplug and replug the receiver or cable.")
     raise DeviceError("XM2w 4k not found. Is the mouse or dongle plugged in?")
 
 
