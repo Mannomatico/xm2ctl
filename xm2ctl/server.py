@@ -267,8 +267,12 @@ class MouseService:
         while True:
             # Look for movement often, so the time of the last activity stays accurate.
             with self.lock:
+                self.activity.check()
                 woke = self.asleep and self.activity.awake(self.idle_limit)
-            if woke or last_poll is None or time.monotonic() - last_poll >= self.interval:
+            # Until the mouse was found (for example before the udev permissions are set
+            # after login), retry every tick; that only reads sysfs.
+            retry = self.connection is None and not self.asleep
+            if woke or retry or last_poll is None or time.monotonic() - last_poll >= self.interval:
                 last_poll = time.monotonic()
                 self.check_battery()
             time.sleep(ACTIVITY_TICK)
