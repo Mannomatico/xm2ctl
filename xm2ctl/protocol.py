@@ -39,6 +39,9 @@ WRITE_CHUNK_INDEX = 6
 WRITE_PAYLOAD_OFFSET = 16
 ACK_OK = 0x01
 ACK_PENDING = 0x08  # reply not ready yet (seen over the receiver); poll again
+# Over the receiver: the mouse is asleep. The receiver then blocks every further command
+# (0x08 or 0x03) until the mouse wakes up, so never query a sleeping mouse.
+ACK_ASLEEP = 0x03
 
 COMMAND_SIZE = 64
 CONFIG_REQUEST_SIZE = 1041

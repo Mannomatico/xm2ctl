@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 
 from .protocol import (
+    ACK_ASLEEP,
     ACK_OK,
     ACK_PENDING,
     COMMAND_SIZE,
@@ -53,6 +54,11 @@ class DeviceError(Exception):
     pass
 
 
+class MouseAsleep(DeviceError):
+    def __init__(self) -> None:
+        super().__init__("The mouse is asleep. Move it to wake it up, then try again.")
+
+
 def _ioc_rw(nr: int, size: int) -> int:
     return (3 << 30) | (size << 16) | (ord("H") << 8) | nr
 
@@ -69,17 +75,24 @@ def keyboard_fix_active(descriptor: bytes) -> bool | None:
     return usage_min == 0x00
 
 
-def _find_node() -> tuple[Path, int, bytes]:
-    """Return (/dev/hidrawN, product_id, report descriptor) of the vendor config interface."""
-    seen = []
+def _hidraw_nodes() -> list[tuple[Path, int]]:
+    """Return (/sys/class/hidraw/hidrawN, product_id) of every XM2w 4k interface."""
+    nodes = []
     for node in sorted(HIDRAW_ROOT.iterdir()):
         uevent = (node / "device" / "uevent").read_text()
         hid_id = next((l for l in uevent.splitlines() if l.startswith("HID_ID=")), None)
         if hid_id is None:
             continue
         _bus, vid, pid = (int(part, 16) for part in hid_id.split("=", 1)[1].split(":"))
-        if vid != VENDOR_ID or pid not in (PID_WIRED, PID_DONGLE):
-            continue
+        if vid == VENDOR_ID and pid in (PID_WIRED, PID_DONGLE):
+            nodes.append((node, pid))
+    return nodes
+
+
+def find_node() -> tuple[Path, int, bytes]:
+    """Return (/dev/hidrawN, product_id, report descriptor) of the vendor config interface."""
+    seen = []
+    for node, pid in _hidraw_nodes():
         descriptor = (node / "device" / "report_descriptor").read_bytes()
         if bytes([0x85, REPORT_ID_COMMAND]) in descriptor:
             return Path("/dev") / node.name, pid, descriptor
@@ -92,7 +105,7 @@ def _find_node() -> tuple[Path, int, bytes]:
 
 class Device:
     def __init__(self) -> None:
-        self.path, self.product_id, self.descriptor = _find_node()
+        self.path, self.product_id, self.descriptor = find_node()
         try:
             self._fd = os.open(self.path, os.O_RDWR)
         except PermissionError as exc:
@@ -160,6 +173,8 @@ class Device:
             reply = self._get_feature(REPORT_ID_COMMAND, COMMAND_SIZE)
             if reply[1] == ACK_OK:
                 return reply
+            if reply[1] == ACK_ASLEEP and not self.is_wired:
+                raise MouseAsleep()
             if reply[1] != ACK_PENDING or time.monotonic() >= deadline:
                 raise DeviceError(f"command {opcode:#04x} failed with status {reply[1]:#04x}")
             time.sleep(REPLY_POLL_INTERVAL)
@@ -188,7 +203,13 @@ class Device:
     def read_config(self) -> Config:
         self._send(bytes([REPORT_ID_COMMAND, OP_LOAD_CONFIG]))
         time.sleep(0.12 if self.is_wired else 0.4)
-        return Config(self._get_feature(REPORT_ID_CONFIG, CONFIG_REQUEST_SIZE))
+        raw = self._get_feature(REPORT_ID_CONFIG, CONFIG_REQUEST_SIZE)
+        # A blocked receiver answers with its stale command reply instead of the config.
+        if raw[1] == ACK_ASLEEP and not self.is_wired:
+            raise MouseAsleep()
+        if raw[1] == ACK_PENDING:
+            raise DeviceError("config read failed, the receiver is busy")
+        return Config(raw)
 
     def _write_block(self, opcode: int, payload: bytes, chunk: int = 0) -> None:
         buf = bytearray(COMMAND_SIZE)
@@ -214,3 +235,64 @@ class Device:
         if mismatches:
             offsets = ", ".join(str(off) for off, _, _ in mismatches)
             raise DeviceError(f"verification failed, bytes differ at offsets: {offsets}")
+
+
+class ActivityWatch:
+    """Notices mouse movement on the receiver's pointer interface, without sending anything.
+
+    The kernel keeps the latest input reports of each hidraw reader, so reading them
+    now and then is enough to know whether the mouse moved since the last check. The
+    configuration interface is left out: the mouse occasionally sends battery reports
+    there on its own, which do not reset its deep sleep timer.
+    """
+
+    def __init__(self) -> None:
+        self._fds: dict[str, int] = {}
+        self._last_check = time.monotonic()
+        self.last_activity: float | None = None  # earliest time the last movement can have been
+        self.moved_at: float | None = None  # time of the check that last saw movement
+
+    def check(self) -> float | None:
+        """Return the monotonic time the mouse was last seen moving, or None."""
+        now = time.monotonic()
+        try:
+            nodes = {
+                node.name for node, pid in _hidraw_nodes()
+                if pid == PID_DONGLE and bytes([0x85, REPORT_ID_COMMAND])
+                not in (node / "device" / "report_descriptor").read_bytes()
+            }
+        except OSError:
+            nodes = set()
+        for name in set(self._fds) - nodes:
+            os.close(self._fds.pop(name))
+        for name in nodes - set(self._fds):
+            try:
+                self._fds[name] = os.open(Path("/dev") / name, os.O_RDONLY | os.O_NONBLOCK)
+            except OSError:
+                continue
+        moved = False
+        for name, fd in list(self._fds.items()):
+            try:
+                while os.read(fd, 64):
+                    moved = True
+            except BlockingIOError:
+                pass
+            except OSError:  # unplugged
+                os.close(self._fds.pop(name))
+        if moved:
+            # The movement happened some time after the previous check; assume the earliest.
+            self.last_activity = self._last_check
+            self.moved_at = now
+        self._last_check = now
+        return self.last_activity
+
+    def awake(self, idle_limit: float | None, margin: float = 30.0) -> bool:
+        """True if the mouse moved recently enough that it cannot have gone to sleep yet.
+
+        idle_limit is the shorter of the power saving and deep sleep timers in seconds, or
+        None if both are disabled. Queries in power saving mode can block the receiver too.
+        """
+        last = self.check()
+        if idle_limit is None:
+            return True
+        return last is not None and time.monotonic() - last < idle_limit - margin

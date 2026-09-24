@@ -58,6 +58,10 @@ Run tests with `python3 -m unittest discover tests`. Deploy locally with `sh ins
 - In wired mode the official tool always writes 1000 Hz.
 - Button entries are `[type, value x5, click]`, order left, right, middle, back,
   forward, CPI, wheel up, wheel down, starting at config offset 71.
+- Never send a command for the mouse over the receiver unless it moved recently: in
+  power saving or deep sleep it can answer `0x03`, and the receiver then blocks all
+  commands, often until it is replugged. Service and CLI check for recent movement first
+  (`ActivityWatch`, `ensure_awake`). Keep this in mind for any hardware test script.
 - Keyboard codes are plain HID usages (F5 = `0x3E`). Linux dropped them because the
   firmware descriptor declares Usage Minimum 1 for the key array; `hid-bpf/` fixes it.
 - Related project: https://github.com/qaustria/xm2w (Tauri app). Some of its findings

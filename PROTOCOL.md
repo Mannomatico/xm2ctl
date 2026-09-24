@@ -49,13 +49,32 @@ The reply is read with GET_FEATURE on report `0xA1`; byte 1 is the status, `0x01
 the keyboard interface is active (for example with the HID-BPF fix loaded); keep polling
 the reply until the status changes instead of treating it as an error.
 
-The receiver can also get stuck: every command, including the receiver-only `0x0D`,
-then stays at `0x08` indefinitely, `[0xA1, 0x0F, 0x01]` answers `0x03`, and GET_FEATURE
-on `0xA0` returns the same stale `0xA1` buffer. Neither a warm reboot of the PC (the
-receiver keeps power) nor switching the mouse off and on clears it; only replugging the
-receiver does. The trigger is not confirmed. Suspected are commands from two processes
-interleaving, or a process being killed mid-command, so xm2ctl serialises access with
-`flock` on the hidraw node and lets the service finish a command before it exits.
+**Only query the mouse over the receiver while it is in use.** A command for a mouse in
+deep sleep, and sometimes already in power saving mode, answers `0x03`. From that moment
+the receiver blocks every command, including the receiver-only `0x0D`: they stay at
+`0x08`, sync answers `0x03`, and GET_FEATURE on `0xA0` returns the stale `0xA1` buffer.
+Sync and `0x0D` look normal *before* such a command, so they cannot tell whether the
+mouse sleeps. Observed:
+
+- Deep sleep set to 1 minute, one battery query after 90 s without movement: `0x03`,
+  then blocked. Moving the mouse released the block (two more commands had been sent).
+- Power saving 1 minute, battery query about 50 s after the last movement: `0x03`. The
+  service then kept polling every 30 s; the block stayed even after moving the mouse,
+  only replugging the receiver helped. A warm reboot of the PC does not, the receiver
+  keeps power.
+- Polling every 10 to 15 s while the mouse lay still for 5 to 8 minutes mostly worked,
+  so the failure in power saving mode is intermittent.
+
+xm2ctl therefore only talks to the mouse over the receiver while it has seen movement
+within the shorter of the power saving and deep sleep timers minus 30 s, and after a
+failed command waits for new movement. Movement is seen by reading the input reports of
+the receiver's pointer interface (hidraw keeps the latest reports per reader), which
+costs nothing when polled every few seconds. The CLI asks the running service for the
+time since the last movement, or asks the user to move the mouse.
+
+Now and then the mouse sends an unsolicited input report on the configuration interface:
+`03 B4 <battery %> ...`. It does not reset the deep sleep timer and is too rare to replace
+the battery query (none within 3 minutes in one test).
 
 Over the receiver, the official tool sends `[0xA1, 0x0F, 0x01]` and reads the reply before
 every command, and waits longer (about 1 s instead of 0.5 s) before reading replies.

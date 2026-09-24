@@ -2,6 +2,7 @@
 
 const TOKEN = document.querySelector('meta[name="xm2-token"]').content;
 const REFRESH_MS = 60_000;
+const ASLEEP_REFRESH_MS = 5_000;  // the service answers without waking the mouse
 
 const BUTTONS = {
   left: { label: "Left button" },
@@ -129,6 +130,7 @@ function render() {
   $("savebar").hidden = !online;
   renderHeader();
   if (!online) {
+    $("offline-title").textContent = state && state.asleep ? "Mouse is asleep" : "Mouse not found";
     $("offline-reason").textContent = state ? state.error : "";
     return;
   }
@@ -487,4 +489,5 @@ $("discard").addEventListener("click", () => {
 $("retry").addEventListener("click", load);
 
 setInterval(() => { if (!busy && !isDirty()) load(); }, REFRESH_MS);
+setInterval(() => { if (!busy && state && state.asleep) load(); }, ASLEEP_REFRESH_MS);
 load();

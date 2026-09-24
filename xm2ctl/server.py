@@ -12,6 +12,7 @@ the GNOME Shell extension.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import os
 import secrets
@@ -26,7 +27,7 @@ from pathlib import Path
 
 from . import profiles
 from .__main__ import save_backup
-from .device import Device, DeviceError
+from .device import ActivityWatch, Device, DeviceError, MouseAsleep
 from .keys import MEDIA
 from .protocol import (
     CPI_MAX,
@@ -37,6 +38,7 @@ from .protocol import (
     SPDT_BUTTONS,
     TIMER_MAX,
     TIMER_MIN,
+    Config,
 )
 from .settings import apply_json, config_to_json
 
@@ -48,6 +50,7 @@ STATIC_FILES = {
     "/style.css": "text/css; charset=utf-8",
 }
 MAX_BODY = 64 * 1024
+ACTIVITY_TICK = 10  # seconds between checks for mouse movement
 RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR")
 
 
@@ -76,6 +79,52 @@ class MouseService:
         self._firmware: dict[tuple[str, int], dict] = {}
         self.settings: dict | None = None  # last settings read from or written to the mouse
         self._last_error: str | None = None
+        self.activity = ActivityWatch()
+        # Shorter of the power saving and deep sleep timers in seconds (None = both off);
+        # until the config was read once, assume the shortest possible timer.
+        self.idle_limit: float | None = 60.0
+        self.asleep = False  # the last battery check was skipped because the mouse slept
+        self.blocked_at: float | None = None  # a command failed; wait for new movement
+
+    def _open(self) -> Device:
+        """Open the device, refusing to talk to a mouse that may be asleep.
+
+        Over the receiver, a command for a mouse in power saving or deep sleep can block
+        the receiver until it is replugged, so only talk while the mouse is in use.
+        """
+        dev = Device()
+        if not dev.is_wired:
+            awake = self.activity.awake(self.idle_limit)
+            if self.blocked_at is not None:
+                if (self.activity.moved_at or 0) > self.blocked_at:
+                    self.blocked_at = None
+                else:
+                    awake = False
+            if not awake:
+                dev.close()
+                raise MouseAsleep()
+        return dev
+
+    @contextlib.contextmanager
+    def _talk(self, dev: Device):
+        """Use an open device; after a failed command, wait for new movement before retrying."""
+        try:
+            with dev:
+                yield dev
+        except DeviceError:
+            if not dev.is_wired:
+                self.blocked_at = time.monotonic()
+            raise
+
+    def _session(self):
+        return self._talk(self._open())
+
+    def _remember(self, cfg: Config) -> dict:
+        self.settings = config_to_json(cfg)
+        timers = [self.settings[name] for name in ("power_saving", "deep_sleep")]
+        limits = [timer["minutes"] * 60.0 for timer in timers if timer["enabled"]]
+        self.idle_limit = min(limits) if limits else None
+        return self.settings
 
     def _log_device(self, error: Exception | None) -> None:
         """Log device errors to the journal, once per change instead of every poll."""
@@ -103,7 +152,7 @@ class MouseService:
     def state(self) -> dict:
         with self.lock:
             try:
-                with Device() as dev:
+                with self._session() as dev:
                     battery = dev.battery_percent()
                     self._record_battery(battery, dev)
                     self._log_device(None)
@@ -115,6 +164,9 @@ class MouseService:
                         "keyboard_fix": dev.keyboard_fix,
                         "settings": self._read_settings(dev),
                     }
+            except MouseAsleep as exc:
+                self._log_device(exc)
+                return {"connected": False, "asleep": True, "error": str(exc)}
             except (DeviceError, OSError) as exc:
                 self._log_device(exc)
                 self._firmware.clear()
@@ -122,13 +174,14 @@ class MouseService:
                 return {"connected": False, "error": str(exc)}
 
     def _read_settings(self, dev: Device) -> dict:
-        self.settings = config_to_json(dev.read_config())
-        return self.settings
+        return self._remember(dev.read_config())
 
     def battery_status(self) -> dict:
         """Cached battery state for the panel indicator; never talks to the mouse."""
         age = None if self.battery_time is None else round(time.time() - self.battery_time)
+        last = self.activity.last_activity
         return {
+            "idle": None if last is None else round(time.monotonic() - last),
             "connected": self.connection is not None,
             "connection": self.connection,
             "battery": self.battery,
@@ -138,14 +191,14 @@ class MouseService:
 
     def apply(self, data: dict) -> dict:
         with self.lock:
-            with Device() as dev:
+            with self._session() as dev:
                 old = dev.read_config()
                 new = old.copy()
                 apply_json(new, data, dev.is_wired)
                 if new.diff(old):
                     save_backup(old)
                     dev.write_config(old, new)
-                self.settings = config_to_json(new)
+                self._remember(new)
         return self.state()
 
     def profiles(self) -> dict:
@@ -162,21 +215,21 @@ class MouseService:
     def apply_profile(self, name: str) -> dict:
         settings = profiles.load(name)
         with self.lock:
-            with Device() as dev:
+            with self._session() as dev:
                 old = dev.read_config()
                 new = old.copy()
                 notes = profiles.apply(new, settings, dev.is_wired)
                 if new.diff(old):
                     save_backup(old)
                     dev.write_config(old, new)
-                self.settings = config_to_json(new)
+                self._remember(new)
         return {**self.profiles(), "notes": notes}
 
     def save_profile(self, name: str, settings: dict) -> dict:
         """Validate settings against the current config and store them; nothing is written."""
         name = profiles.check_name(name)
         with self.lock:
-            with Device() as dev:
+            with self._session() as dev:
                 cfg = dev.read_config()
         apply_json(cfg, settings, wired=False)
         profiles.save(name, config_to_json(cfg))
@@ -189,25 +242,36 @@ class MouseService:
     def check_battery(self) -> None:
         with self.lock:
             try:
-                dev = Device()
+                dev = self._open()
+            except MouseAsleep as exc:
+                self._log_device(exc)  # keep the last known battery value
+                self.asleep = True
+                return
             except (DeviceError, OSError) as exc:
                 self._log_device(exc)
                 self.connection = None  # receiver or cable unplugged
                 self.settings = None
                 return
+            self.asleep = False
             try:
-                with dev:
+                with self._talk(dev):
                     self._record_battery(dev.battery_percent(), dev)
                     if self.settings is None:  # once per connection, for the active profile
                         self._read_settings(dev)
                 self._log_device(None)
             except (DeviceError, OSError) as exc:
-                self._log_device(exc)  # mouse asleep: keep the last known battery value
+                self._log_device(exc)  # out of range: keep the last known battery value
 
     def monitor(self) -> None:
+        last_poll = None
         while True:
-            self.check_battery()
-            time.sleep(self.interval)
+            # Look for movement often, so the time of the last activity stays accurate.
+            with self.lock:
+                woke = self.asleep and self.activity.awake(self.idle_limit)
+            if woke or last_poll is None or time.monotonic() - last_poll >= self.interval:
+                last_poll = time.monotonic()
+                self.check_battery()
+            time.sleep(ACTIVITY_TICK)
 
 
 # --- HTTP --------------------------------------------------------------------

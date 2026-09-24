@@ -15,12 +15,14 @@ Examples:
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 from . import profiles
-from .device import Device, DeviceError
+from .device import ActivityWatch, Device, DeviceError, find_node
 from .keys import HELP as ACTION_HELP
 from .keys import format_action, parse_action
 from .protocol import (
@@ -30,6 +32,7 @@ from .protocol import (
     FILTER_BUTTONS,
     OFF_DEEP_SLEEP,
     OFF_POWER_SAVING,
+    PID_WIRED,
     SPDT_BUTTONS,
     Config,
 )
@@ -38,6 +41,9 @@ from .settings import config_to_json
 REMAPPABLE_BUTTONS = BUTTONS[1:]  # left can only be swapped via --left-handed
 
 BACKUP_DIR = Path.home() / ".local" / "state" / "xm2ctl"
+SERVICE_URL = "http://127.0.0.1:8341/api/battery"
+AWAKE_IDLE = 20  # seconds; safe below the shortest power saving timer (1 min) minus margin
+AWAKE_WAIT = 30  # seconds to wait for the user to move the mouse
 
 
 def on_off(value: str) -> bool:
@@ -78,6 +84,38 @@ def print_config(cfg: Config) -> None:
     for button in BUTTONS:
         mode = cfg.get_click_mode(button) if button in FILTER_BUTTONS else ""
         print(f"    {button:<11}     : {format_action(cfg.get_mapping(button)):<20} {mode}")
+
+
+def service_idle() -> int | None:
+    """Seconds since the running service last saw mouse movement, or None."""
+    try:
+        with urllib.request.urlopen(SERVICE_URL, timeout=1) as response:
+            return json.load(response).get("idle")
+    except (OSError, ValueError):
+        return None
+
+
+def ensure_awake() -> None:
+    """Make sure the mouse is awake before talking to it over the receiver.
+
+    A command for a mouse in power saving or deep sleep can block the receiver until it
+    is replugged. The cable needs no check.
+    """
+    _path, product_id, _descriptor = find_node()
+    if product_id == PID_WIRED:
+        return
+    idle = service_idle()
+    if idle is not None and idle < AWAKE_IDLE:
+        return
+    watch = ActivityWatch()
+    watch.check()
+    print("Move the mouse to wake it up...", file=sys.stderr, flush=True)
+    deadline = time.monotonic() + AWAKE_WAIT
+    while time.monotonic() < deadline:
+        time.sleep(0.2)
+        if watch.check() is not None:
+            return
+    raise DeviceError("no mouse movement seen. The mouse is only queried while it is awake.")
 
 
 def save_backup(cfg: Config) -> Path:
@@ -179,6 +217,7 @@ def cmd_profile(args: argparse.Namespace) -> None:
         return
 
     name = profiles.check_name(args.name)
+    ensure_awake()
     with Device() as dev:
         if args.action == "save":
             if (profiles.exists(name) and not args.yes
@@ -258,6 +297,7 @@ def main() -> None:
         if args.command == "profile":
             cmd_profile(args)
         else:
+            ensure_awake()
             with Device() as dev:
                 handlers[args.command](dev, args)
     except (DeviceError, ValueError, OSError) as exc:
