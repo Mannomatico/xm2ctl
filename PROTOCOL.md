@@ -49,6 +49,14 @@ The reply is read with GET_FEATURE on report `0xA1`; byte 1 is the status, `0x01
 the keyboard interface is active (for example with the HID-BPF fix loaded); keep polling
 the reply until the status changes instead of treating it as an error.
 
+The receiver can also get stuck: every command, including the receiver-only `0x0D`,
+then stays at `0x08` indefinitely, `[0xA1, 0x0F, 0x01]` answers `0x03`, and GET_FEATURE
+on `0xA0` returns the same stale `0xA1` buffer. Neither a warm reboot of the PC (the
+receiver keeps power) nor switching the mouse off and on clears it; only replugging the
+receiver does. The trigger is not confirmed. Suspected are commands from two processes
+interleaving, or a process being killed mid-command, so xm2ctl serialises access with
+`flock` on the hidraw node and lets the service finish a command before it exits.
+
 Over the receiver, the official tool sends `[0xA1, 0x0F, 0x01]` and reads the reply before
 every command, and waits longer (about 1 s instead of 0.5 s) before reading replies.
 
