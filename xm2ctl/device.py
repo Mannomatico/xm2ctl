@@ -45,6 +45,8 @@ REPLY_DELAY_DONGLE = 1.0
 # How long to keep polling while the device reports ACK_PENDING.
 REPLY_TIMEOUT = 3.0
 REPLY_POLL_INTERVAL = 0.1
+# How long to wait for another process (CLI or service) to finish its conversation.
+LOCK_TIMEOUT = 15.0
 
 
 class DeviceError(Exception):
@@ -97,6 +99,18 @@ class Device:
             raise DeviceError(
                 f"no permission for {self.path}. Install the udev rule and replug the mouse."
             ) from exc
+        # Interleaved commands from two processes can leave the receiver stuck in the
+        # pending state until it is replugged, so only one process may talk at a time.
+        deadline = time.monotonic() + LOCK_TIMEOUT
+        while True:
+            try:
+                fcntl.flock(self._fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    os.close(self._fd)
+                    raise DeviceError(f"{self.path} is busy, another process is using it") from None
+                time.sleep(0.05)
 
     def __enter__(self) -> Device:
         return self

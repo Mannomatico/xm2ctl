@@ -15,6 +15,7 @@ import argparse
 import json
 import os
 import secrets
+import signal
 import subprocess
 import sys
 import threading
@@ -318,6 +319,14 @@ def main() -> None:
     token = secrets.token_urlsafe(32)
     write_token(token)
     httpd = ThreadingHTTPServer((HOST, args.port), make_handler(service, token, args.port))
+
+    def stop(_signum, _frame) -> None:
+        # Let a running conversation with the mouse finish; an interrupted command can
+        # leave the receiver stuck until it is replugged.
+        service.lock.acquire(timeout=20)
+        os._exit(0)
+
+    signal.signal(signal.SIGTERM, stop)
     print(f"xm2ctl web UI on http://{HOST}:{args.port}")
     httpd.serve_forever()
 
