@@ -12,3 +12,6 @@ dist/
 # HID-BPF build output
 hid-bpf/vmlinux.h
 hid-bpf/*.bpf.o
+
+# Local context for AI assistants
+CLAUDE.md
