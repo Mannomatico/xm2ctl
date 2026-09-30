@@ -48,6 +48,10 @@ REPLY_TIMEOUT = 3.0
 REPLY_POLL_INTERVAL = 0.1
 # How long to wait for another process (CLI or service) to finish its conversation.
 LOCK_TIMEOUT = 15.0
+# After a pause longer than WAKE_GAP, wait until the mouse has been in use for WAKE_SETTLE
+# seconds before talking to it, so it is fully awake.
+WAKE_GAP = 30.0
+WAKE_SETTLE = 5.0
 
 
 class DeviceError(Exception):
@@ -57,6 +61,15 @@ class DeviceError(Exception):
 class MouseAsleep(DeviceError):
     def __init__(self) -> None:
         super().__init__("The mouse is asleep. Move it to wake it up, then try again.")
+
+
+class ReceiverBusy(DeviceError):
+    """A command stayed pending (0x08) longer than REPLY_TIMEOUT."""
+
+
+class ReceiverStuck(DeviceError):
+    def __init__(self) -> None:
+        super().__init__("The wireless receiver does not respond. Unplug it and plug it back in.")
 
 
 def _ioc_rw(nr: int, size: int) -> int:
@@ -175,7 +188,9 @@ class Device:
                 return reply
             if reply[1] == ACK_ASLEEP and not self.is_wired:
                 raise MouseAsleep()
-            if reply[1] != ACK_PENDING or time.monotonic() >= deadline:
+            if reply[1] == ACK_PENDING and time.monotonic() >= deadline:
+                raise ReceiverBusy(f"command {opcode:#04x} failed with status {reply[1]:#04x}")
+            if reply[1] != ACK_PENDING:
                 raise DeviceError(f"command {opcode:#04x} failed with status {reply[1]:#04x}")
             time.sleep(REPLY_POLL_INTERVAL)
 
@@ -194,6 +209,19 @@ class Device:
             return None
         reply = self._query(OP_DONGLE_INFO)
         return f"{reply[16]:x}.{reply[17]:02x}"
+
+    def receiver_stuck(self) -> bool:
+        """True if the receiver no longer answers its own info command (see PROTOCOL.md)."""
+        try:
+            self.dongle_firmware()
+        except (DeviceError, OSError):
+            return True
+        return False
+
+    @property
+    def instance(self) -> str:
+        """Kernel name of the HID device, e.g. 0003:3367:1970.000E; changes when replugged."""
+        return (HIDRAW_ROOT / self.path.name / "device").resolve().name
 
     def battery_percent(self) -> int:
         return self._query(OP_BATTERY, delay=0.3)[16]
@@ -251,6 +279,7 @@ class ActivityWatch:
         self._last_check = time.monotonic()
         self.last_activity: float | None = None  # earliest time the last movement can have been
         self.moved_at: float | None = None  # time of the check that last saw movement
+        self.active_since: float | None = None  # start of the current period of use
 
     def check(self) -> float | None:
         """Return the monotonic time the mouse was last seen moving, or None."""
@@ -280,6 +309,8 @@ class ActivityWatch:
             except OSError:  # unplugged
                 os.close(self._fds.pop(name))
         if moved:
+            if self.moved_at is None or now - self.moved_at > WAKE_GAP:
+                self.active_since = now  # the mouse may just have woken up
             # The movement happened some time after the previous check; assume the earliest.
             self.last_activity = self._last_check
             self.moved_at = now
@@ -287,12 +318,20 @@ class ActivityWatch:
         return self.last_activity
 
     def awake(self, idle_limit: float | None, margin: float = 30.0) -> bool:
-        """True if the mouse moved recently enough that it cannot have gone to sleep yet.
+        """Check for movement, then tell whether the mouse is awake (see is_awake)."""
+        self.check()
+        return self.is_awake(idle_limit, margin)
+
+    def is_awake(self, idle_limit: float | None, margin: float = 30.0) -> bool:
+        """True if the mouse is in use: it moved recently enough that it cannot have gone to
+        sleep yet, and it has been in use for WAKE_SETTLE seconds after a longer pause.
 
         idle_limit is the shorter of the power saving and deep sleep timers in seconds, or
-        None if both are disabled. Queries in power saving mode can block the receiver too.
+        None if both are disabled. Queries in power saving mode can block the receiver too,
+        and one right after waking up did once.
         """
-        last = self.check()
         if idle_limit is None:
             return True
-        return last is not None and time.monotonic() - last < idle_limit - margin
+        now = time.monotonic()
+        return (self.last_activity is not None and now - self.last_activity < idle_limit - margin
+                and self.active_since is not None and now - self.active_since >= WAKE_SETTLE)

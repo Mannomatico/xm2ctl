@@ -86,13 +86,14 @@ def print_config(cfg: Config) -> None:
         print(f"    {button:<11}     : {format_action(cfg.get_mapping(button)):<20} {mode}")
 
 
-def service_idle() -> int | None:
-    """Seconds since the running service last saw mouse movement, or None."""
+def service_says_awake() -> bool:
+    """True if the running service has seen the mouse in use just now."""
     try:
         with urllib.request.urlopen(SERVICE_URL, timeout=1) as response:
-            return json.load(response).get("idle")
+            status = json.load(response)
     except (OSError, ValueError):
-        return None
+        return False
+    return bool(status.get("awake")) and (status.get("idle") or 0) < AWAKE_IDLE
 
 
 def ensure_awake() -> None:
@@ -104,16 +105,15 @@ def ensure_awake() -> None:
     _path, product_id, _descriptor = find_node()
     if product_id == PID_WIRED:
         return
-    idle = service_idle()
-    if idle is not None and idle < AWAKE_IDLE:
+    if service_says_awake():
         return
     watch = ActivityWatch()
     watch.check()
-    print("Move the mouse to wake it up...", file=sys.stderr, flush=True)
+    print("Move the mouse for a few seconds to wake it up...", file=sys.stderr, flush=True)
     deadline = time.monotonic() + AWAKE_WAIT
     while time.monotonic() < deadline:
         time.sleep(0.2)
-        if watch.check() is not None:
+        if watch.awake(idle_limit=60.0):  # the shortest possible timer
             return
     raise DeviceError("no mouse movement seen. The mouse is only queried while it is awake.")
 

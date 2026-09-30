@@ -64,10 +64,18 @@ mouse sleeps. Observed:
   keeps power.
 - Polling every 10 to 15 s while the mouse lay still for 5 to 8 minutes mostly worked,
   so the failure in power saving mode is intermittent.
+- With the rule below in place, it ran for almost six days, then a battery query about
+  five seconds after the mouse was moved again (after five minutes without movement)
+  stayed at `0x08`, and the receiver was blocked from then on. The cause is unclear; the
+  mouse may not have been fully awake yet.
 
 xm2ctl therefore only talks to the mouse over the receiver while it has seen movement
 within the shorter of the power saving and deep sleep timers minus 30 s, and after a
-failed command waits for new movement. Movement is seen by reading the input reports of
+failed command waits for new movement. After a pause of more than 30 s it waits until
+the mouse has been in use for 5 s. If a command stays at `0x08` and the receiver-only
+`0x0D` does not answer either, the receiver is treated as blocked: no more commands
+until it is replugged (the kernel HID device name changes), and a desktop notification
+asks the user to replug it. Movement is seen by reading the input reports of
 the receiver's pointer interface (hidraw keeps the latest reports per reader), which
 costs nothing when polled every few seconds. The CLI asks the running service for the
 time since the last movement, or asks the user to move the mouse.

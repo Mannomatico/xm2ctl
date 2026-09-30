@@ -15,6 +15,7 @@ class ActivityWatchTest(unittest.TestCase):
         watch = ActivityWatch()
         watch.check = lambda: watch.last_activity  # no hidraw access
         watch.last_activity = None if seconds_ago is None else time.monotonic() - seconds_ago
+        watch.active_since = None if seconds_ago is None else watch.last_activity - 60
         return watch
 
     def test_no_movement_seen_means_asleep(self):
@@ -26,6 +27,13 @@ class ActivityWatchTest(unittest.TestCase):
     def test_margin_before_sleep(self):
         self.assertFalse(self.watch(100).awake(120))  # 30 s margin: only 90 s are safe
         self.assertTrue(self.watch(20).awake(60))
+
+    def test_waits_after_waking_up(self):
+        watch = self.watch(1)
+        watch.active_since = time.monotonic() - 2
+        self.assertFalse(watch.awake(600))
+        watch.active_since = time.monotonic() - 6
+        self.assertTrue(watch.awake(600))
 
     def test_disabled_timers_mean_always_awake(self):
         self.assertTrue(self.watch(None).awake(None))

@@ -27,7 +27,7 @@ from pathlib import Path
 
 from . import profiles
 from .__main__ import save_backup
-from .device import ActivityWatch, Device, DeviceError, MouseAsleep
+from .device import ActivityWatch, Device, DeviceError, MouseAsleep, ReceiverBusy, ReceiverStuck
 from .keys import MEDIA
 from .protocol import (
     CPI_MAX,
@@ -85,6 +85,7 @@ class MouseService:
         self.idle_limit: float | None = 60.0
         self.asleep = False  # the last battery check was skipped because the mouse slept
         self.blocked_at: float | None = None  # a command failed; wait for new movement
+        self.stuck: str | None = None  # instance of a receiver that stopped answering
 
     def _open(self) -> Device:
         """Open the device, refusing to talk to a mouse that may be asleep.
@@ -93,6 +94,9 @@ class MouseService:
         the receiver until it is replugged, so only talk while the mouse is in use.
         """
         dev = Device()
+        if self.stuck is not None and dev.instance == self.stuck:
+            dev.close()
+            raise ReceiverStuck()
         if not dev.is_wired:
             awake = self.activity.awake(self.idle_limit)
             if self.blocked_at is not None:
@@ -107,14 +111,28 @@ class MouseService:
 
     @contextlib.contextmanager
     def _talk(self, dev: Device):
-        """Use an open device; after a failed command, wait for new movement before retrying."""
-        try:
-            with dev:
+        """Use an open device; after a failed command, wait for new movement before retrying.
+
+        If the receiver stopped answering altogether, stop talking to it until it is
+        replugged: more commands do not help, and the user has to act.
+        """
+        with dev:
+            try:
                 yield dev
-        except DeviceError:
-            if not dev.is_wired:
+            except ReceiverBusy:
+                if dev.is_wired:
+                    raise
                 self.blocked_at = time.monotonic()
-            raise
+                if not dev.receiver_stuck():
+                    raise
+                self.stuck = dev.instance
+                notify("Mouse receiver not responding",
+                       "Unplug the XM2w 4k receiver and plug it back in.")
+                raise ReceiverStuck() from None
+            except DeviceError:
+                if not dev.is_wired:
+                    self.blocked_at = time.monotonic()
+                raise
 
     def _session(self):
         return self._talk(self._open())
@@ -182,6 +200,7 @@ class MouseService:
         last = self.activity.last_activity
         return {
             "idle": None if last is None else round(time.monotonic() - last),
+            "awake": self.activity.is_awake(self.idle_limit) and self.blocked_at is None,
             "connected": self.connection is not None,
             "connection": self.connection,
             "battery": self.battery,
