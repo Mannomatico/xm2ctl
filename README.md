@@ -66,7 +66,8 @@ Requirements: Linux with systemd, Python 3.9 or newer, `gdbus` for notifications
 ## Web UI
 
 Open http://127.0.0.1:8341 or start "XM2w 4k" from the app grid. The service checks the
-battery every 2 minutes and shows a desktop notification once it drops to 20 % or less.
+battery every 10 minutes while the mouse is in use and shows a desktop notification once
+it drops to 20 % or less.
 
 Over the wireless receiver, the mouse is only queried while it is in use. A query to a
 mouse in power saving or deep sleep can block the receiver until it is replugged (a

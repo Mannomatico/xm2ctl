@@ -266,12 +266,13 @@ class Device:
 
 
 class ActivityWatch:
-    """Notices mouse movement on the receiver's pointer interface, without sending anything.
+    """Notices mouse movement on the receiver, without sending anything to it.
 
     The kernel keeps the latest input reports of each hidraw reader, so reading them
-    now and then is enough to know whether the mouse moved since the last check. The
-    configuration interface is left out: the mouse occasionally sends battery reports
-    there on its own, which do not reset its deep sleep timer.
+    now and then is enough to know whether the mouse moved since the last check.
+    Movement counts on the pointer interface only. On the configuration interface the
+    mouse occasionally sends battery reports on its own (`03 B4 <percent>`); they do not
+    reset its sleep timers and are kept in battery_report instead.
     """
 
     def __init__(self) -> None:
@@ -280,16 +281,20 @@ class ActivityWatch:
         self.last_activity: float | None = None  # earliest time the last movement can have been
         self.moved_at: float | None = None  # time of the check that last saw movement
         self.active_since: float | None = None  # start of the current period of use
+        self.battery_report: tuple[float, int] | None = None  # (time, percent), unsolicited
 
     def check(self) -> float | None:
         """Return the monotonic time the mouse was last seen moving, or None."""
         now = time.monotonic()
+        config_nodes = set()
         try:
-            nodes = {
-                node.name for node, pid in _hidraw_nodes()
-                if pid == PID_DONGLE and bytes([0x85, REPORT_ID_COMMAND])
-                not in (node / "device" / "report_descriptor").read_bytes()
-            }
+            nodes = set()
+            for node, pid in _hidraw_nodes():
+                if pid != PID_DONGLE:
+                    continue
+                if bytes([0x85, REPORT_ID_COMMAND]) in (node / "device" / "report_descriptor").read_bytes():
+                    config_nodes.add(node.name)
+                nodes.add(node.name)
         except OSError:
             nodes = set()
         for name in set(self._fds) - nodes:
@@ -302,8 +307,14 @@ class ActivityWatch:
         moved = False
         for name, fd in list(self._fds.items()):
             try:
-                while os.read(fd, 64):
-                    moved = True
+                while True:
+                    report = os.read(fd, 64)
+                    if not report:
+                        break
+                    if name not in config_nodes:
+                        moved = True
+                    elif report[:2] == bytes([0x03, OP_BATTERY]) and len(report) > 2:
+                        self.battery_report = (now, report[2])
             except BlockingIOError:
                 pass
             except OSError:  # unplugged
@@ -317,14 +328,16 @@ class ActivityWatch:
         self._last_check = now
         return self.last_activity
 
-    def awake(self, idle_limit: float | None, margin: float = 30.0) -> bool:
+    def awake(self, idle_limit: float | None, margin: float = 30.0,
+              settle: float = WAKE_SETTLE) -> bool:
         """Check for movement, then tell whether the mouse is awake (see is_awake)."""
         self.check()
-        return self.is_awake(idle_limit, margin)
+        return self.is_awake(idle_limit, margin, settle)
 
-    def is_awake(self, idle_limit: float | None, margin: float = 30.0) -> bool:
+    def is_awake(self, idle_limit: float | None, margin: float = 30.0,
+                 settle: float = WAKE_SETTLE) -> bool:
         """True if the mouse is in use: it moved recently enough that it cannot have gone to
-        sleep yet, and it has been in use for WAKE_SETTLE seconds after a longer pause.
+        sleep yet, and it has been in use for `settle` seconds after a longer pause.
 
         idle_limit is the shorter of the power saving and deep sleep timers in seconds, or
         None if both are disabled. Queries in power saving mode can block the receiver too,
@@ -334,4 +347,4 @@ class ActivityWatch:
             return True
         now = time.monotonic()
         return (self.last_activity is not None and now - self.last_activity < idle_limit - margin
-                and self.active_since is not None and now - self.active_since >= WAKE_SETTLE)
+                and self.active_since is not None and now - self.active_since >= settle)

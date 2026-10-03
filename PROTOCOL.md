@@ -72,7 +72,9 @@ mouse sleeps. Observed:
 xm2ctl therefore only talks to the mouse over the receiver while it has seen movement
 within the shorter of the power saving and deep sleep timers minus 30 s, and after a
 failed command waits for new movement. After a pause of more than 30 s it waits until
-the mouse has been in use for 5 s. If a command stays at `0x08` and the receiver-only
+the mouse has been in use for 5 s (60 s for the periodic battery poll, after the
+receiver got stuck a second time on the first query 5 s after waking up, once in 185
+wake-ups). If a command stays at `0x08` and the receiver-only
 `0x0D` does not answer either, the receiver is treated as blocked: no more commands
 until it is replugged (the kernel HID device name changes), and a desktop notification
 asks the user to replug it. Movement is seen by reading the input reports of
@@ -82,7 +84,8 @@ time since the last movement, or asks the user to move the mouse.
 
 Now and then the mouse sends an unsolicited input report on the configuration interface:
 `03 B4 <battery %> ...`. It does not reset the deep sleep timer and is too rare to replace
-the battery query (none within 3 minutes in one test).
+the battery query (none within 3 minutes in one test). The service logs every such
+report ("battery report from the mouse") to find out how often they come.
 
 Over the receiver, the official tool sends `[0xA1, 0x0F, 0x01]` and reads the reply before
 every command, and waits longer (about 1 s instead of 0.5 s) before reading replies.
