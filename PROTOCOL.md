@@ -82,10 +82,13 @@ the receiver's pointer interface (hidraw keeps the latest reports per reader), w
 costs nothing when polled every few seconds. The CLI asks the running service for the
 time since the last movement, or asks the user to move the mouse.
 
-Now and then the mouse sends an unsolicited input report on the configuration interface:
-`03 B4 <battery %> ...`. It does not reset the deep sleep timer and is too rare to replace
-the battery query (none within 3 minutes in one test). The service logs every such
-report ("battery report from the mouse") to find out how often they come.
+While it is awake, the mouse sends an unsolicited input report on the configuration
+interface every 5 minutes: `03 B4 <battery %> ...` (959 reports in 9 days of logging).
+Sometimes an extra one comes between those, often with a higher value. It does not reset
+the sleep timers. xm2ctl reads the battery from these reports over the receiver and only
+queries it over the cable. Levels come in 5 % steps, often flip between two neighbouring
+steps, fall quickly near the end (25 % to 5 % in under two hours of use) and stay at 5 %
+until the battery is empty.
 
 Over the receiver, the official tool sends `[0xA1, 0x0F, 0x01]` and reads the reply before
 every command, and waits longer (about 1 s instead of 0.5 s) before reading replies.

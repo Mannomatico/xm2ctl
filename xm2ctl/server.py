@@ -53,9 +53,24 @@ STATIC_FILES = {
 }
 MAX_BODY = 64 * 1024
 ACTIVITY_TICK = 10  # seconds between checks for mouse movement
-# The battery poll waits until the mouse has been in use for this long. The receiver got
-# stuck twice on the first query after the mouse woke up (see PROTOCOL.md).
+# The one config read per connection waits until the mouse has been in use for this long.
+# The receiver got stuck twice on the first query after the mouse woke up (PROTOCOL.md).
 POLL_SETTLE = 60.0
+
+
+def smooth_battery(shown: int | None, pending: int | None, new: int,
+                   charging: bool) -> tuple[int, int | None]:
+    """Return the battery level to show and the pending higher value.
+
+    The mouse estimates its charge in 5 % steps and often flips between two neighbouring
+    steps. Lower values are shown at once; a higher value only when it is reported twice
+    in a row, or while the mouse charges on the cable.
+    """
+    if shown is None or new <= shown or charging:
+        return new, None
+    if pending == new:
+        return new, None
+    return shown, new
 RUNTIME_DIR = os.environ.get("XDG_RUNTIME_DIR")
 
 
@@ -80,6 +95,8 @@ class MouseService:
         self.battery: int | None = None
         self.connection: str | None = None  # "wired", "wireless" or None if not found
         self.battery_time: float | None = None
+        self._battery_pending: int | None = None  # higher level waiting for confirmation
+        self._last_attempt: float | None = None  # last periodic conversation with the mouse
         self.warned = False
         self._firmware: dict[tuple[str, int], dict] = {}
         self.settings: dict | None = None  # last settings read from or written to the mouse
@@ -156,6 +173,8 @@ class MouseService:
             self._last_error = message
 
     def _record_battery(self, percent: int, wired: bool) -> None:
+        percent, self._battery_pending = smooth_battery(
+            self.battery, self._battery_pending, percent, charging=wired)
         self.battery = percent
         self.connection = "wired" if wired else "wireless"
         self.battery_time = time.time()
@@ -276,9 +295,11 @@ class MouseService:
                 return
             try:
                 with self._talk(dev):
-                    self._record_battery(dev.battery_percent(), dev.is_wired)
+                    if dev.is_wired:  # over the receiver the mouse reports it by itself
+                        self._record_battery(dev.battery_percent(), wired=True)
                     if self.settings is None:  # once per connection, for the active profile
                         self._read_settings(dev)
+                    self.connection = "wired" if dev.is_wired else "wireless"
                 self._log_device(None)
             except (DeviceError, OSError) as exc:
                 self._log_device(exc)  # out of range: keep the last known battery value
@@ -289,10 +310,13 @@ class MouseService:
             # Look for movement often, so the time of the last activity stays accurate.
             with self.lock:
                 self.activity.check()
+            # Over the receiver the mouse reports its battery every 5 minutes by itself while
+            # it is awake, so the battery is never queried there.
             report = self.activity.battery_report
             if report is not None and report != seen_report:
+                if seen_report is None or report[1] != seen_report[1]:
+                    print(f"battery report from the mouse: {report[1]} %", file=sys.stderr, flush=True)
                 seen_report = report
-                print(f"battery report from the mouse: {report[1]} %", file=sys.stderr, flush=True)
                 self._record_battery(report[1], wired=False)
             try:
                 _path, product_id, _descriptor = find_node()  # only reads sysfs
@@ -301,10 +325,15 @@ class MouseService:
                 self.connection = None  # receiver or cable unplugged
                 self.settings = None
             else:
-                due = self.battery_time is None or time.time() - self.battery_time >= self.interval
-                in_use = product_id == PID_WIRED or self.activity.is_awake(
-                    self.idle_limit, settle=POLL_SETTLE)
-                if due and in_use:
+                now = time.monotonic()
+                if product_id == PID_WIRED:
+                    due = True  # the cable has no sleep problem: poll the battery
+                else:
+                    # Read the settings once per connection, for the active profile.
+                    due = self.settings is None and self.activity.is_awake(
+                        self.idle_limit, settle=POLL_SETTLE)
+                if due and (self._last_attempt is None or now - self._last_attempt >= self.interval):
+                    self._last_attempt = now
                     self.check_battery()
             time.sleep(ACTIVITY_TICK)
 
@@ -410,7 +439,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="xm2ctl.server")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--low-battery", type=int, default=20, help="warn at or below this percentage")
-    parser.add_argument("--interval", type=int, default=600, help="battery check interval in seconds")
+    parser.add_argument("--interval", type=int, default=600,
+                        help="battery check interval in seconds over the cable")
     args = parser.parse_args()
 
     service = MouseService(args.low_battery, args.interval)

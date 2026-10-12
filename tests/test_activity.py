@@ -5,7 +5,7 @@ import unittest
 
 from xm2ctl.device import ActivityWatch
 from xm2ctl.protocol import OFF_DEEP_SLEEP, OFF_POWER_SAVING
-from xm2ctl.server import MouseService
+from xm2ctl.server import MouseService, smooth_battery
 
 from test_protocol import sample_config
 
@@ -54,6 +54,26 @@ class ServiceDeepSleepTest(unittest.TestCase):
         cfg.set_timer(OFF_DEEP_SLEEP, None)
         service._remember(cfg)
         self.assertIsNone(service.idle_limit)
+
+
+class SmoothBatteryTest(unittest.TestCase):
+    def test_first_value_and_drops_are_shown_at_once(self):
+        self.assertEqual(smooth_battery(None, None, 50, charging=False), (50, None))
+        self.assertEqual(smooth_battery(50, None, 45, charging=False), (45, None))
+
+    def test_rise_needs_two_reports(self):
+        shown, pending = smooth_battery(45, None, 50, charging=False)
+        self.assertEqual((shown, pending), (45, 50))
+        self.assertEqual(smooth_battery(shown, pending, 50, charging=False), (50, None))
+
+    def test_flapping_stays_on_the_lower_value(self):
+        shown, pending = 45, None
+        for value in (50, 45, 50, 45):
+            shown, pending = smooth_battery(shown, pending, value, charging=False)
+            self.assertEqual(shown, 45)
+
+    def test_charging_rises_at_once(self):
+        self.assertEqual(smooth_battery(5, None, 30, charging=True), (30, None))
 
 
 if __name__ == "__main__":
